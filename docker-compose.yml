@@ -1,0 +1,25 @@
+services:
+  love-journal:
+    build: .
+    container_name: manjyun-jshaorii-love-journal
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        format: raw
+    environment:
+      PORT: 1314
+      NODE_ENV: production
+      TZ: Asia/Shanghai
+      DATABASE_PATH: /app/data/love-journal.db
+      UPLOAD_DIR: /app/uploads
+    ports:
+      - "1314:1314"
+    volumes:
+      - ./data:/app/data
+      - ./uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:1314/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

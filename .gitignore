@@ -1,0 +1,10 @@
+node_modules/
+dist-client/
+dist-server/
+data/*
+!data/.gitkeep
+uploads/*
+!uploads/.gitkeep
+.env
+npm-debug.log*
+.DS_Store
