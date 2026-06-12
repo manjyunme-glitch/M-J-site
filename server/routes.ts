@@ -30,7 +30,7 @@ api.get("/auth/status", (req, res) => {
 api.post("/auth/site", loginLimiter, async (req, res) => {
   const parsed = passwordSchema.safeParse(req.body);
   if (!parsed.success || !(await bcrypt.compare(parsed.data.password, config.sitePasswordHash))) {
-    return res.status(401).json({ error: "密码不对，再想想属于我们的数字" });
+    return res.status(401).json({ error: "密码不正确，请重新输入" });
   }
   createSiteSession(res);
   res.json({ ok: true });

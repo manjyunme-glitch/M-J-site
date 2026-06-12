@@ -36,9 +36,9 @@ export const config = {
   adminPasswordHash: requiredHash("ADMIN_PASSWORD_HASH"),
   secureCookies: process.env.SECURE_COOKIES === "true",
   trustProxy: process.env.TRUST_PROXY === "true",
-  githubRepository: process.env.GITHUB_REPOSITORY || "manjyunme-glitch/M-J-site",
-  githubBranch: process.env.GITHUB_BRANCH || "main",
-  githubToken: process.env.GITHUB_TOKEN || ""
+  githubRepository: process.env.GITHUB_REPOSITORY?.trim() || "manjyunme-glitch/M-J-site",
+  githubBranch: process.env.GITHUB_BRANCH?.trim() || "main",
+  githubToken: process.env.GITHUB_TOKEN?.trim() || ""
 };
 
 fs.mkdirSync(path.dirname(config.databasePath), { recursive: true });

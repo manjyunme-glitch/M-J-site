@@ -1,10 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CalendarDays, ChevronDown, Headphones, Heart, LockKeyhole, Pause, Play, Sparkles, X } from "lucide-react";
+import { useGSAP } from "@gsap/react";
+import gsap from "gsap";
+import { ScrollTrigger } from "gsap/ScrollTrigger";
+import { BookOpen, CalendarDays, ChevronDown, Eye, EyeOff, Heart, Home, Images, ListChecks, LockKeyhole, Mail, Pause, Play, Sparkles, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import { Link, Navigate, NavLink, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { api, jsonBody } from "./api";
-import type { Anniversary, Content } from "./types";
+import type { Album, Anniversary, Content, Letter } from "./types";
+
+gsap.registerPlugin(ScrollTrigger, useGSAP);
 
 type AuthState = "checking" | "locked" | "open";
+
+const navigation = [
+  { to: "/", label: "首页", icon: Home, end: true },
+  { to: "/stories", label: "故事", icon: BookOpen },
+  { to: "/gallery", label: "相册", icon: Images },
+  { to: "/letters", label: "情书", icon: Mail },
+  { to: "/wishes", label: "愿望", icon: ListChecks }
+] as const;
 
 function shanghaiDate() {
   const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
@@ -37,7 +51,7 @@ function nextAnniversary(items: Anniversary[]) {
   const today = shanghaiDate();
   const [year] = today.split("-").map(Number);
   return items.flatMap((item) => {
-    if (!item.enabled) return [];
+    if (!item.enabled || item.title.includes("生日")) return [];
     const suffix = item.eventDate.slice(4);
     let date = item.annual ? `${year}${suffix}` : item.eventDate;
     if (item.annual && date < today) date = `${year + 1}${suffix}`;
@@ -48,6 +62,7 @@ function nextAnniversary(items: Anniversary[]) {
 
 function LoginCover({ onOpen }: { onOpen: () => void }) {
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const submit = async (event: React.FormEvent) => {
@@ -68,22 +83,63 @@ function LoginCover({ onOpen }: { onOpen: () => void }) {
       <div className="paper-noise" />
       <section className="lock-card" aria-labelledby="lock-title">
         <span className="tape tape-blue" />
-        <span className="tiny-label">PRIVATE JOURNAL · 2025—FOREVER</span>
+        <span className="tiny-label">PRIVATE JOURNAL · MEMBERS ONLY</span>
         <div className="lock-monogram"><span>M</span><i /><span>J</span></div>
         <h1 id="lock-title">有些故事，只想说给你听</h1>
-        <p>输入那组和生日有关的数字，翻开我们的纪念册。</p>
+        <p>输入专属密码，翻开这本私人纪念册。</p>
         <form onSubmit={submit} className="lock-form">
           <label htmlFor="site-password"><LockKeyhole size={17} /> 专属密码</label>
           <div className="password-row">
-            <input id="site-password" value={password} onChange={(event) => setPassword(event.target.value)} inputMode="numeric" autoComplete="current-password" maxLength={20} placeholder="••••••" autoFocus />
-            <button disabled={loading || !password}>{loading ? "正在翻页" : "打开"}</button>
+            <input id="site-password" type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" autoCapitalize="none" spellCheck={false} maxLength={128} placeholder="输入密码" autoFocus />
+            <button type="button" className="password-visibility" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? "隐藏密码" : "显示密码"} aria-pressed={showPassword} title={showPassword ? "隐藏密码" : "显示密码"}>{showPassword ? <EyeOff size={18} /> : <Eye size={18} />}</button>
+            <button type="submit" className="password-submit" disabled={loading || !password}>{loading ? "正在翻页" : "打开"}</button>
           </div>
           {error && <p className="form-error" role="alert">{error}</p>}
         </form>
-        <div className="lock-clues"><span>11 · 22</span><span>red thread</span><span>11 · 26</span></div>
+        <div className="lock-clues"><span>private</span><span>red thread</span><span>memories</span></div>
       </section>
     </main>
   );
+}
+
+function AnimatedPage({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  const root = useRef<HTMLElement>(null);
+  const location = useLocation();
+
+  useEffect(() => { window.scrollTo({ top: 0, behavior: "auto" }); }, [location.pathname]);
+
+  useGSAP(() => {
+    const media = gsap.matchMedia();
+    media.add("(prefers-reduced-motion: no-preference)", () => {
+      gsap.timeline({ defaults: { ease: "power2.out" } })
+        .from("[data-page-intro] > *", { autoAlpha: 0, y: 18, duration: 0.58, stagger: 0.055 })
+        .from("[data-page-art]", { autoAlpha: 0, y: 22, rotate: 1.5, duration: 0.68 }, "<0.1");
+
+      gsap.utils.toArray<HTMLElement>("[data-reveal]").forEach((element) => {
+        gsap.from(element, {
+          autoAlpha: 0,
+          y: 24,
+          duration: 0.62,
+          ease: "power2.out",
+          scrollTrigger: { trigger: element, start: "top 88%", once: true }
+        });
+      });
+
+      gsap.utils.toArray<HTMLElement>("[data-stagger]").forEach((container) => {
+        gsap.from(Array.from(container.children), {
+          autoAlpha: 0,
+          y: 18,
+          duration: 0.52,
+          stagger: 0.07,
+          ease: "power2.out",
+          scrollTrigger: { trigger: container, start: "top 88%", once: true }
+        });
+      });
+    });
+    return () => media.revert();
+  }, { scope: root, dependencies: [location.pathname], revertOnUpdate: true });
+
+  return <main ref={root} className={`journal-page ${className}`}>{children}</main>;
 }
 
 function NumberSecret({ number, title, children, variant }: { number: string; title: string; children: React.ReactNode; variant: string }) {
@@ -129,112 +185,200 @@ function MusicPlayer({ src }: { src?: string | null }) {
   );
 }
 
-function Journal({ content }: { content: Content }) {
+function SiteNavigation() {
+  return (
+    <>
+      <header className="site-header">
+        <Link to="/" className="wordmark">M <i /> J</Link>
+        <nav aria-label="主要导航">
+          {navigation.slice(1).map((item) => <NavLink key={item.to} to={item.to} className={({ isActive }) => isActive ? "active" : ""}>{item.label}</NavLink>)}
+        </nav>
+        <Link className="admin-link" to="/admin">管理</Link>
+      </header>
+      <nav className="mobile-site-nav" aria-label="移动端主要导航">
+        {navigation.map(({ to, label, icon: Icon, ...item }) => <NavLink key={to} to={to} end={"end" in item ? item.end : false} className={({ isActive }) => isActive ? "active" : ""}><Icon size={18} /><span>{label}</span></NavLink>)}
+      </nav>
+    </>
+  );
+}
+
+function PageHeading({ eyebrow, title, description }: { eyebrow: string; title: string; description: string }) {
+  return <header className="page-heading scrapbook-section" data-page-intro><small>{eyebrow}</small><h1>{title}</h1><p>{description}</p></header>;
+}
+
+function HomePage({ content }: { content: Content }) {
   const { settings } = content;
   const today = shanghaiDate();
   const knownDays = daysBetween(settings.metDate, today);
   const loveDays = daysBetween(settings.togetherDate, today);
   const duration = calendarDuration(settings.togetherDate, today);
   const next = useMemo(() => nextAnniversary(content.anniversaries), [content.anniversaries]);
-  const [lightbox, setLightbox] = useState<string | null>(null);
+  const pendingWishes = content.wishes.filter((wish) => wish.status === "pending").length;
 
   return (
-    <div className="site-shell">
-      <header className="site-header">
-        <a href="#top" className="wordmark">M <i /> J</a>
-        <nav aria-label="主要导航">
-          <a href="#story">故事</a><a href="#album">相册</a><a href="#letter">情书</a><a href="#wishes">愿望</a>
-        </nav>
-        <a className="admin-link" href="/admin">管理</a>
-      </header>
-
-      <main id="top">
-        <section className="hero scrapbook-section">
-          <div className="hero-copy">
-            <span className="eyebrow">OUR LITTLE ARCHIVE · NO. 0520</span>
-            <h1>{settings.manName}<span>与</span>{settings.womanName}</h1>
-            <p className="hero-subtitle">{settings.subtitle}</p>
-            <div className="hero-stats">
-              <div><b>{knownDays}</b><span>相识的日子</span></div>
-              <div><b>{loveDays}</b><span>成为恋人的日子</span></div>
-              <div><b>{duration.years}<em>年</em>{duration.months}<em>月</em>{duration.days}<em>天</em></b><span>认真相爱至今</span></div>
-            </div>
-            <a className="paper-button" href="#story">从第一页开始 <ChevronDown size={18} /></a>
+    <AnimatedPage className="home-page">
+      <section className="hero scrapbook-section">
+        <div className="hero-copy" data-page-intro>
+          <span className="eyebrow">OUR LITTLE ARCHIVE · NO. 0520</span>
+          <h1>{settings.manName}<span>与</span>{settings.womanName}</h1>
+          <p className="hero-subtitle">{settings.subtitle}</p>
+          <div className="hero-stats">
+            <div><b>{knownDays}</b><span>相识的日子</span></div>
+            <div><b>{loveDays}</b><span>成为恋人的日子</span></div>
+            <div><b>{duration.years}<em>年</em>{duration.months}<em>月</em>{duration.days}<em>天</em></b><span>认真相爱至今</span></div>
           </div>
-          <div className="hero-collage">
-            <Polaroid src={content.timeline[7]?.imageUrl} alt="红与蓝，牵住同一颗心" index={1} />
-            <div className="date-stamp">SINCE<br /><b>2026.03.14</b></div>
-            <span className="doodle-heart"><Heart /></span>
-          </div>
-          <div className="thread thread-blue" /><div className="thread thread-red" />
-        </section>
+          <Link className="paper-button" to="/stories">从第一页开始 <ChevronDown size={18} /></Link>
+        </div>
+        <div className="hero-collage" data-page-art>
+          <Polaroid src={content.timeline[7]?.imageUrl || content.timeline[0]?.imageUrl} alt="红与蓝，牵住同一颗心" index={1} />
+          <div className="date-stamp">SINCE<br /><b>{settings.togetherDate.replaceAll("-", ".")}</b></div>
+          <span className="doodle-heart"><Heart /></span>
+        </div>
+        <div className="thread thread-blue" /><div className="thread thread-red" />
+      </section>
 
-        <section className="next-date scrapbook-section">
-          <div className="section-kicker"><CalendarDays size={18} /> NEXT PAGE</div>
-          {next ? <><p>距离「{next.title}」还有</p><strong>{next.remaining}<span>天</span></strong><small>{next.nextDate.replaceAll("-", ".")} · {next.description}</small></> : <p>今天也值得被纪念。</p>}
-        </section>
+      <section className="next-date scrapbook-section" data-reveal>
+        <div className="section-kicker"><CalendarDays size={18} /> NEXT PAGE</div>
+        {next ? <><p>距离「{next.title}」还有</p><strong>{next.remaining}<span>天</span></strong><small>{next.nextDate.replaceAll("-", ".")} · {next.description}</small></> : <p>今天也值得被纪念。</p>}
+      </section>
 
-        <section className="people scrapbook-section">
-          <div className="person-card blue-note"><span className="tape tape-blue" /><small>ABOUT HIM</small><h2>{settings.manName}</h2><p>{settings.manBirthday.replaceAll("-", ".")}</p><i>“会慢慢学会，把在意说得更清楚。”</i></div>
-          <div className="between-note"><span>两个普通的人</span><Heart /><b>写一本不普通的故事</b></div>
-          <div className="person-card red-note"><span className="tape tape-red" /><small>ABOUT HER</small><h2>{settings.womanName}</h2><p>{settings.womanBirthday.replaceAll("-", ".")}</p><i>“认真感受，也认真期待被坚定选择。”</i></div>
-        </section>
+      <section className="people scrapbook-section" data-stagger>
+        <div className="person-card blue-note"><span className="tape tape-blue" /><small>ABOUT HIM</small><h2>{settings.manName}</h2><i>“会慢慢学会，把在意说得更清楚。”</i></div>
+        <div className="between-note"><span>两个普通的人</span><Heart /><b>写一本不普通的故事</b></div>
+        <div className="person-card red-note"><span className="tape tape-red" /><small>ABOUT HER</small><h2>{settings.womanName}</h2><i>“认真感受，也认真期待被坚定选择。”</i></div>
+      </section>
 
-        <section className="numbers scrapbook-section" aria-labelledby="number-title">
-          <div className="section-heading"><small>THREE SECRET NUMBERS</small><h2 id="number-title">故事留下的暗号</h2><p>有些数字，只有我们知道它为什么特别。</p></div>
-          <div className="number-grid">
-            <NumberSecret number="520" title="故事开始的日子" variant="secret-blue">加上微信的那一天。是巧合，还是故事提前写好的第一行？</NumberSecret>
-            <NumberSecret number="167" title="奶茶小票" variant="secret-ticket">取餐号码落在手里，刚好聊到那些还没开窍的感情。粤语里，它好像还藏着另一句话。</NumberSecret>
-            <NumberSecret number="3·14" title="终于说出口" variant="secret-red">鼓起勇气表白以后才知道，原来这一天也是白色情人节。</NumberSecret>
-          </div>
-        </section>
+      <section className="numbers scrapbook-section" aria-labelledby="number-title" data-reveal>
+        <div className="section-heading"><small>THREE SECRET NUMBERS</small><h2 id="number-title">故事留下的暗号</h2><p>有些数字，只有我们知道它为什么特别。</p></div>
+        <div className="number-grid" data-stagger>
+          <NumberSecret number="520" title="故事开始的日子" variant="secret-blue">加上微信的那一天。是巧合，还是故事提前写好的第一行？</NumberSecret>
+          <NumberSecret number="167" title="奶茶小票" variant="secret-ticket">取餐号码落在手里，刚好聊到那些还没开窍的感情。粤语里，它好像还藏着另一句话。</NumberSecret>
+          <NumberSecret number="3·14" title="终于说出口" variant="secret-red">鼓起勇气表白以后才知道，原来这一天也是白色情人节。</NumberSecret>
+        </div>
+      </section>
 
-        <section id="story" className="story scrapbook-section">
-          <div className="section-heading"><small>CHAPTERS 01—{String(content.timeline.length).padStart(2, "0")}</small><h2>我们的故事，慢慢写</h2><p>{settings.heroNote}</p></div>
-          <div className="timeline">
-            {content.timeline.map((event, index) => (
-              <article key={event.id} className={`timeline-entry ${index % 2 ? "right" : "left"}`}>
-                <div className="timeline-number">{String(index + 1).padStart(2, "0")}</div>
-                <Polaroid src={event.imageUrl} alt={event.title} index={index} />
-                <div className="timeline-copy"><time>{event.dateLabel}</time><h3>{event.title}</h3><p>{event.body}</p></div>
-              </article>
-            ))}
-          </div>
-        </section>
+      <section className="home-index scrapbook-section" data-reveal>
+        <div className="section-heading"><small>CONTENTS</small><h2>每段记忆，都有自己的页面</h2><p>首页只保留最近的线索，完整内容放进各自的章节里。</p></div>
+        <div className="home-index-grid" data-stagger>
+          <Link to="/stories"><BookOpen /><small>STORIES · {content.timeline.length}</small><h3>故事</h3><p>{content.timeline.at(-1)?.title || "从第一章开始读"}</p><span>进入时间线 →</span></Link>
+          <Link to="/gallery"><Images /><small>ALBUMS · {content.albums.length}</small><h3>相册</h3><p>{content.albums.at(-1)?.title || "把平常的日子留下"}</p><span>翻看相册 →</span></Link>
+          <Link to="/letters"><Mail /><small>LETTERS · {content.letters.length}</small><h3>情书</h3><p>{content.letters.at(-1)?.title || "打开写给彼此的话"}</p><span>拆开信封 →</span></Link>
+          <Link to="/wishes"><ListChecks /><small>PENDING · {pendingWishes}</small><h3>愿望</h3><p>把未来拆成可以一起期待的小事。</p><span>查看愿望 →</span></Link>
+        </div>
+      </section>
 
-        <section id="album" className="album-section scrapbook-section">
-          <div className="section-heading"><small>PHOTO POCKETS</small><h2>把平常的日子留下来</h2><p>真实照片会慢慢替换这些画面，位置先为未来留好。</p></div>
-          {content.albums.map((album, albumIndex) => (
-            <article className="album" key={album.id}>
-              <div className="album-title"><span>0{albumIndex + 1}</span><div><h3>{album.title}</h3>{album.eventDate && <time>{album.eventDate.replaceAll("-", ".")}</time>}<p>{album.description}</p></div></div>
-              <div className="photo-grid">
-                {(album.media.length ? album.media : content.timeline.slice(albumIndex * 3, albumIndex * 3 + 3)).map((item, index) => {
-                  const src = "kind" in item ? item.thumbUrl : item.imageUrl;
-                  const alt = "kind" in item ? item.displayName || item.caption || item.originalName : item.title;
-                  return <button className={`photo-button photo-${index + 1}`} key={item.id} onClick={() => src && setLightbox(src)}><Polaroid src={src} alt={alt} index={index + albumIndex} /></button>;
-                })}
-              </div>
+      <section className="ending scrapbook-section" data-reveal><Sparkles /><p>故事没有写完。</p><h2>下一页，还是我们。</h2><span>MANJYUN × JSHAORII · 2025—FOREVER</span></section>
+    </AnimatedPage>
+  );
+}
+
+function StoriesPage({ content }: { content: Content }) {
+  return (
+    <AnimatedPage>
+      <PageHeading eyebrow={`CHAPTERS 01—${String(content.timeline.length).padStart(2, "0")}`} title="我们的故事，慢慢写" description={content.settings.heroNote} />
+      <section className="story scrapbook-section">
+        <div className="timeline">
+          {content.timeline.map((event, index) => (
+            <article key={event.id} className={`timeline-entry ${index % 2 ? "right" : "left"}`} data-reveal>
+              <div className="timeline-number">{String(index + 1).padStart(2, "0")}</div>
+              <Polaroid src={event.imageUrl} alt={event.title} index={index} />
+              <div className="timeline-copy"><time>{event.dateLabel}</time><h3>{event.title}</h3><p>{event.body}</p></div>
             </article>
           ))}
-        </section>
+        </div>
+      </section>
+    </AnimatedPage>
+  );
+}
 
-        <section id="letter" className="letter-section scrapbook-section">
-          <div className="letter-envelope"><span>TO: {settings.womanName}</span><i /><span>FROM: {settings.manName}</span></div>
-          {content.letters.map((letter) => <article className="letter-paper" key={letter.id}><span className="tape tape-red" /><small>PRIVATE LETTER · {letter.title}</small><ReactMarkdown>{letter.body}</ReactMarkdown><footer>ManJyun</footer></article>)}
-        </section>
+function AlbumCover({ album }: { album: Album }) {
+  const cover = album.coverUrl || album.media[0]?.thumbUrl;
+  return <Link className="album-index-card" to={`/gallery/${album.id}`} data-reveal>{cover ? <img src={cover} alt={album.title} /> : <div className="drawn-placeholder scene-2"><span /></div>}<div><small>{album.eventDate?.replaceAll("-", ".") || `${album.media.length} PHOTOS`}</small><h2>{album.title}</h2><p>{album.description}</p><span>打开这本相册 →</span></div></Link>;
+}
 
-        <section id="wishes" className="wish-section scrapbook-section">
-          <div className="section-heading"><small>TO BE CONTINUED</small><h2>还想和你一起完成</h2><p>愿望不是任务清单，是未来可以一起期待的页面。</p></div>
-          <div className="wish-grid">
-            {content.wishes.map((wish, index) => <article className={wish.status === "completed" ? "wish-card completed" : "wish-card"} key={wish.id}><span>{String(index + 1).padStart(2, "0")}</span><Heart size={20} /><h3>{wish.title}</h3><p>{wish.description}</p><small>{wish.status === "completed" ? `完成于 ${wish.completedDate || "某个好日子"}` : wish.targetDate ? `期待在 ${wish.targetDate}` : "等待一起出发"}</small></article>)}
-          </div>
-        </section>
+function GalleryPage({ content }: { content: Content }) {
+  return (
+    <AnimatedPage>
+      <PageHeading eyebrow={`PHOTO POCKETS · ${content.albums.length} ALBUMS`} title="把平常的日子留下来" description="照片按相册与日期归档，每一本都有自己的页面。" />
+      <section className="album-index scrapbook-section" data-stagger>{content.albums.map((album) => <AlbumCover key={album.id} album={album} />)}</section>
+    </AnimatedPage>
+  );
+}
 
-        <section className="ending scrapbook-section"><Sparkles /><p>故事没有写完。</p><h2>下一页，还是我们。</h2><span>MANJYUN × JSHAORII · 2025—FOREVER</span></section>
-      </main>
+function AlbumPage({ content, openLightbox }: { content: Content; openLightbox: (src: string) => void }) {
+  const { albumId } = useParams();
+  const album = content.albums.find((item) => item.id === Number(albumId));
+  if (!album) return <Navigate to="/gallery" replace />;
+  return (
+    <AnimatedPage>
+      <header className="page-heading scrapbook-section" data-page-intro><small><Link to="/gallery">相册</Link> / ALBUM {album.id}</small><h1>{album.title}</h1><p>{album.eventDate ? `${album.eventDate.replaceAll("-", ".")} · ` : ""}{album.description}</p></header>
+      <section className="album-detail scrapbook-section">
+        <div className="album-photo-grid" data-stagger>
+          {album.media.map((item, index) => {
+            const src = item.thumbUrl || item.url;
+            const alt = item.displayName || item.caption || item.originalName;
+            return <button key={item.id} onClick={() => src && openLightbox(src)}><Polaroid src={src} alt={alt} index={index} />{item.takenDate && <time>{item.takenDate.replaceAll("-", ".")}</time>}</button>;
+          })}
+        </div>
+        {!album.media.length && <div className="empty-public">这本相册还在等待第一张照片。</div>}
+      </section>
+    </AnimatedPage>
+  );
+}
 
-      <MusicPlayer src={settings.musicUrl} />
-      {lightbox && <div className="lightbox" role="dialog" aria-modal="true" onClick={() => setLightbox(null)}><button aria-label="关闭"><X /></button><img src={lightbox.replace("variant=thumb", "variant=web")} alt="相册大图" /></div>}
+function letterExcerpt(letter: Letter) {
+  return letter.body.replace(/[#*_>`\[\]()~-]/g, "").replace(/\s+/g, " ").trim().slice(0, 110);
+}
+
+function LettersPage({ content }: { content: Content }) {
+  return (
+    <AnimatedPage>
+      <PageHeading eyebrow={`PRIVATE LETTERS · ${content.letters.length}`} title="写给彼此的话" description="每一封信单独收藏，想读的时候再慢慢拆开。" />
+      <section className="letter-index scrapbook-section" data-stagger>
+        {content.letters.map((letter, index) => <Link to={`/letters/${letter.id}`} className="letter-index-card" key={letter.id}><div className="letter-mini-envelope"><span>{String(index + 1).padStart(2, "0")}</span><i /></div><div><small>PRIVATE LETTER</small><h2>{letter.title}</h2><p>{letterExcerpt(letter)}</p><span>拆开这封信 →</span></div></Link>)}
+      </section>
+    </AnimatedPage>
+  );
+}
+
+function LetterPage({ content }: { content: Content }) {
+  const { letterId } = useParams();
+  const letter = content.letters.find((item) => item.id === Number(letterId));
+  if (!letter) return <Navigate to="/letters" replace />;
+  return (
+    <AnimatedPage>
+      <header className="page-heading scrapbook-section compact-heading" data-page-intro><small><Link to="/letters">情书</Link> / PRIVATE LETTER</small><h1>{letter.title}</h1><p>TO: {content.settings.womanName} · FROM: {content.settings.manName}</p></header>
+      <section className="letter-reading scrapbook-section" data-reveal><article className="letter-paper"><span className="tape tape-red" /><ReactMarkdown>{letter.body}</ReactMarkdown><footer>ManJyun</footer></article></section>
+    </AnimatedPage>
+  );
+}
+
+function WishesPage({ content }: { content: Content }) {
+  return (
+    <AnimatedPage>
+      <PageHeading eyebrow="TO BE CONTINUED" title="还想和你一起完成" description="愿望不是任务清单，是未来可以一起期待的页面。" />
+      <section className="wish-section scrapbook-section"><div className="wish-grid" data-stagger>{content.wishes.map((wish, index) => <article className={wish.status === "completed" ? "wish-card completed" : "wish-card"} key={wish.id}><span>{String(index + 1).padStart(2, "0")}</span><Heart size={20} /><h3>{wish.title}</h3><p>{wish.description}</p><small>{wish.status === "completed" ? `完成于 ${wish.completedDate || "某个好日子"}` : wish.targetDate ? `期待在 ${wish.targetDate}` : "等待一起出发"}</small></article>)}</div></section>
+    </AnimatedPage>
+  );
+}
+
+function Journal({ content }: { content: Content }) {
+  const [lightbox, setLightbox] = useState<string | null>(null);
+  return (
+    <div className="site-shell">
+      <SiteNavigation />
+      <Routes>
+        <Route path="/" element={<HomePage content={content} />} />
+        <Route path="/stories" element={<StoriesPage content={content} />} />
+        <Route path="/gallery" element={<GalleryPage content={content} />} />
+        <Route path="/gallery/:albumId" element={<AlbumPage content={content} openLightbox={setLightbox} />} />
+        <Route path="/letters" element={<LettersPage content={content} />} />
+        <Route path="/letters/:letterId" element={<LetterPage content={content} />} />
+        <Route path="/wishes" element={<WishesPage content={content} />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+      <MusicPlayer src={content.settings.musicUrl} />
+      {lightbox && <div className="lightbox" role="dialog" aria-modal="true" onClick={() => setLightbox(null)}><button aria-label="关闭"><X /></button><img src={lightbox.replace("variant=thumb", "variant=web")} alt="相册大图" onClick={(event) => event.stopPropagation()} /></div>}
     </div>
   );
 }

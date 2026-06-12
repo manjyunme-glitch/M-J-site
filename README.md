@@ -45,6 +45,18 @@ docker compose logs -f love-journal
 
 照片会生成网页图和缩略图。支持 JPEG、PNG、WebP，单张最大 15MB。音乐支持 MP3、M4A、OGG，最大 30MB。
 
+## 前台页面
+
+认证后的前台采用独立页面结构：
+
+- `/`：首页摘要与近期入口。
+- `/stories`：完整故事时间线。
+- `/gallery`、`/gallery/:albumId`：相册列表与照片页。
+- `/letters`、`/letters/:letterId`：情书列表与正文。
+- `/wishes`：愿望清单。
+
+页面切换和滚动入场使用 GSAP 与 ScrollTrigger，系统开启“减少动态效果”时会自动停用位移和滚动动画。
+
 ## 数据与备份
 
 所有持久化内容都在两个目录：
@@ -87,6 +99,9 @@ docker compose up -d --build
 GITHUB_REPOSITORY=manjyunme-glitch/M-J-site
 GITHUB_BRANCH=main
 GITHUB_TOKEN=github_pat_xxx
+APP_HTTP_PROXY=http://192.168.0.113:9890
+APP_HTTPS_PROXY=http://192.168.0.113:9890
+APP_NO_PROXY=localhost,127.0.0.1,::1
 DATA_VOLUME=m-j-site-data
 UPLOAD_VOLUME=m-j-site-uploads
 ```
@@ -118,6 +133,10 @@ GITHUB_TOKEN=github_pat_xxx
 两个密码值可在项目目录运行 `npm run hash-password -- <密码>` 生成。仓库拉取认证和 `GITHUB_TOKEN` 可以使用同一个只读 token。使用 HTTPS 反向代理后，将 `SECURE_COOKIES` 和 `TRUST_PROXY` 都改为 `true`。
 
 Portainer 部署必须设置 `DATA_VOLUME=m-j-site-data` 和 `UPLOAD_VOLUME=m-j-site-uploads`，让数据库和照片存放在 Docker 命名卷中，而不是可能被 GitOps 重新克隆的仓库目录。重新部署堆栈不会清空命名卷；删除卷或迁移 Docker 主机前仍需备份。
+
+服务使用 Docker 主机现有的 `bridge` 网络，不再创建 Compose 独立网络，便于 Cloudflare Tunnel 通过 `192.168.0.113:1314` 访问。这个站点只有一个容器，不依赖 Compose 服务名解析。
+
+GitHub 更新检查通过 `APP_HTTP_PROXY` / `APP_HTTPS_PROXY` 访问外网。`401` 表示请求已到达 GitHub，但 Token 无效或过期，不是代理故障；此时应在 Portainer 中重新生成并填写只授予本仓库 `Contents: Read-only` 的 fine-grained token。
 
 ## 公网部署
 

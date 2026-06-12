@@ -14,11 +14,13 @@
   "dependencies": {
     "@fontsource/noto-sans-sc": "^5.2.9",
     "@fontsource/noto-serif-sc": "^5.2.9",
+    "@gsap/react": "^2.1.2",
     "@vitejs/plugin-react": "latest",
     "bcryptjs": "latest",
     "cookie-parser": "latest",
     "express": "latest",
     "express-rate-limit": "latest",
+    "gsap": "^3.15.0",
     "helmet": "latest",
     "lucide-react": "latest",
     "multer": "latest",

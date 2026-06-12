@@ -27,6 +27,8 @@ export function getContent(includeDrafts = false) {
   return {
     settings: {
       ...settings,
+      manBirthday: includeDrafts ? settings.manBirthday : "",
+      womanBirthday: includeDrafts ? settings.womanBirthday : "",
       musicUrl: mediaUrl(settings.musicMediaId as number | null)
     },
     anniversaries,

@@ -84,7 +84,14 @@ export async function getDeploymentStatus(): Promise<DeploymentStatus> {
       headers,
       signal: AbortSignal.timeout(10000)
     });
-    if (!response.ok) throw new Error(response.status === 404 ? "GitHub 返回 404；私有仓库请配置只读 GITHUB_TOKEN" : `GitHub API 返回 ${response.status}`);
+    if (!response.ok) {
+      const messages: Record<number, string> = {
+        401: "GitHub Token 无效或已过期，请在 Portainer 中重新填写 GITHUB_TOKEN",
+        403: "GitHub 拒绝访问，请检查 Token 的仓库范围和 Contents: Read-only 权限",
+        404: "GitHub 返回 404；私有仓库请确认 Token 已授权访问此仓库"
+      };
+      throw new Error(messages[response.status] || `GitHub API 返回 ${response.status}`);
+    }
     const data = await response.json() as {
       sha?: string;
       commit?: { message?: string; committer?: { date?: string }; author?: { date?: string } };
