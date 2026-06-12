@@ -26,17 +26,11 @@ services:
     ports:
       - "1314:1314"
     volumes:
-      - ${DATA_VOLUME:-m-j-site-data}:/app/data
-      - ${UPLOAD_VOLUME:-m-j-site-uploads}:/app/uploads
+      - ${DATA_PATH:-/share/DockerData/M-J-site/data}:/app/data
+      - ${UPLOAD_PATH:-/share/DockerData/M-J-site/uploads}:/app/uploads
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:1314/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 15s
-
-volumes:
-  m-j-site-data:
-    name: m-j-site-data
-  m-j-site-uploads:
-    name: m-j-site-uploads

@@ -146,8 +146,10 @@ function NumberSecret({ number, title, children, variant }: { number: string; ti
   const [open, setOpen] = useState(false);
   return (
     <button className={`number-secret ${variant} ${open ? "is-open" : ""}`} onClick={() => setOpen((value) => !value)} aria-expanded={open}>
-      <span className="number-face"><b>{number}</b><small>{open ? "收起这页" : "轻触翻开"}</small></span>
-      <span className="number-back"><strong>{title}</strong><span>{children}</span></span>
+      <span className="number-secret-inner">
+        <span className="number-face" aria-hidden={open}><b>{number}</b><small>轻触翻开</small></span>
+        <span className="number-back" aria-hidden={!open}><strong>{title}</strong><span>{children}</span><small>轻触收起这页</small></span>
+      </span>
     </button>
   );
 }

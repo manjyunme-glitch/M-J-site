@@ -102,8 +102,8 @@ GITHUB_TOKEN=github_pat_xxx
 APP_HTTP_PROXY=http://192.168.0.113:9890
 APP_HTTPS_PROXY=http://192.168.0.113:9890
 APP_NO_PROXY=localhost,127.0.0.1,::1
-DATA_VOLUME=m-j-site-data
-UPLOAD_VOLUME=m-j-site-uploads
+DATA_PATH=/share/DockerData/M-J-site/data
+UPLOAD_PATH=/share/DockerData/M-J-site/uploads
 ```
 
 Token 只需授予目标仓库的 `Contents: Read-only`。后台只检查更新，不会调用 Portainer 或自动重新部署。
@@ -132,7 +132,17 @@ GITHUB_TOKEN=github_pat_xxx
 
 两个密码值可在项目目录运行 `npm run hash-password -- <密码>` 生成。仓库拉取认证和 `GITHUB_TOKEN` 可以使用同一个只读 token。使用 HTTPS 反向代理后，将 `SECURE_COOKIES` 和 `TRUST_PROXY` 都改为 `true`。
 
-Compose 默认使用 `m-j-site-data` 和 `m-j-site-uploads` 两个 Docker 命名卷，让数据库和照片脱离可能被 GitOps 重新克隆的仓库目录。容器启动时会自动修复卷目录权限，再以非 root 用户运行应用。重新部署堆栈不会清空命名卷；删除卷或迁移 Docker 主机前仍需备份。本地开发如需使用项目目录，可覆盖为 `DATA_VOLUME=./data` 和 `UPLOAD_VOLUME=./uploads`。
+Compose 默认把数据库绑定到 `/share/DockerData/M-J-site/data`，把上传文件绑定到 `/share/DockerData/M-J-site/uploads`。容器启动时会自动创建目录、修复权限，再以非 root 用户运行应用。本地开发如需使用项目目录，可覆盖为 `DATA_PATH=./data` 和 `UPLOAD_PATH=./uploads`。
+
+如果旧版本已经使用 `m-j-site-data` 与 `m-j-site-uploads` 命名卷，先停止旧 Stack，并在 Docker 主机上迁移数据：
+
+```sh
+mkdir -p /share/DockerData/M-J-site/data /share/DockerData/M-J-site/uploads
+docker run --rm -v m-j-site-data:/source:ro -v /share/DockerData/M-J-site/data:/target alpine sh -c 'cp -a /source/. /target/'
+docker run --rm -v m-j-site-uploads:/source:ro -v /share/DockerData/M-J-site/uploads:/target alpine sh -c 'cp -a /source/. /target/'
+```
+
+确认文件已经复制后再重新部署；直接切换到空目录会得到一套新数据库。旧命名卷不会被 Compose 自动删除，可在确认新目录运行正常后自行备份或清理。Portainer 从 GitHub 拉取的临时构建目录由 Portainer 自身管理，Compose 只能固定应用的数据库和上传文件位置。
 
 服务使用 Docker 主机现有的 `bridge` 网络，不再创建 Compose 独立网络，便于 Cloudflare Tunnel 通过 `192.168.0.113:1314` 访问。这个站点只有一个容器，不依赖 Compose 服务名解析。
 
