@@ -91,6 +91,32 @@ GITHUB_TOKEN=github_pat_xxx
 
 Token 只需授予目标仓库的 `Contents: Read-only`。后台只检查更新，不会调用 Portainer 或自动重新部署。
 
+## Portainer 部署
+
+在 Portainer 的 `堆栈 -> 添加堆栈 -> 仓库` 中填写：
+
+- 仓库 URL：`https://github.com/manjyunme-glitch/M-J-site.git`
+- 仓库引用：`refs/heads/main`
+- Compose 路径：`docker-compose.yml`
+- 私有仓库认证：GitHub 用户名配合只授予该仓库 `Contents: Read-only` 的 fine-grained token。
+
+在页面下方的环境变量区域填写：
+
+```env
+SITE_PASSWORD_HASH=$$2b$$...
+ADMIN_PASSWORD_HASH=$$2b$$...
+COOKIE_SECRET=至少64位随机字符串
+SECURE_COOKIES=false
+TRUST_PROXY=false
+GITHUB_REPOSITORY=manjyunme-glitch/M-J-site
+GITHUB_BRANCH=main
+GITHUB_TOKEN=github_pat_xxx
+```
+
+两个密码值可在项目目录运行 `npm run hash-password -- <密码>` 生成。仓库拉取认证和 `GITHUB_TOKEN` 可以使用同一个只读 token。使用 HTTPS 反向代理后，将 `SECURE_COOKIES` 和 `TRUST_PROXY` 都改为 `true`。
+
+Compose 使用仓库目录下的 `data/` 和 `uploads/` 持久化内容。重新部署堆栈不会清空它们；删除堆栈或迁移 Portainer 前应先备份这两个目录。
+
 ## 公网部署
 
 直接暴露 `1314` 端口只适合局域网或测试。公网使用时应在容器前配置 Caddy、Nginx Proxy Manager 或 Nginx，并启用 HTTPS，然后将 `.env` 中：

@@ -1,17 +1,20 @@
 services:
   love-journal:
     build: .
+    pull_policy: build
     container_name: manjyun-jshaorii-love-journal
     restart: unless-stopped
-    env_file:
-      - path: .env
-        format: raw
     environment:
       PORT: 1314
       NODE_ENV: production
       TZ: Asia/Shanghai
       DATABASE_PATH: /app/data/love-journal.db
       UPLOAD_DIR: /app/uploads
+      SITE_PASSWORD_HASH: ${SITE_PASSWORD_HASH:?SITE_PASSWORD_HASH is required}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:?ADMIN_PASSWORD_HASH is required}
+      COOKIE_SECRET: ${COOKIE_SECRET:?COOKIE_SECRET is required}
+      SECURE_COOKIES: ${SECURE_COOKIES:-false}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
       GITHUB_REPOSITORY: ${GITHUB_REPOSITORY:-manjyunme-glitch/M-J-site}
       GITHUB_BRANCH: ${GITHUB_BRANCH:-main}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
