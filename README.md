@@ -87,6 +87,8 @@ docker compose up -d --build
 GITHUB_REPOSITORY=manjyunme-glitch/M-J-site
 GITHUB_BRANCH=main
 GITHUB_TOKEN=github_pat_xxx
+DATA_VOLUME=m-j-site-data
+UPLOAD_VOLUME=m-j-site-uploads
 ```
 
 Token 只需授予目标仓库的 `Contents: Read-only`。后台只检查更新，不会调用 Portainer 或自动重新部署。
@@ -115,7 +117,7 @@ GITHUB_TOKEN=github_pat_xxx
 
 两个密码值可在项目目录运行 `npm run hash-password -- <密码>` 生成。仓库拉取认证和 `GITHUB_TOKEN` 可以使用同一个只读 token。使用 HTTPS 反向代理后，将 `SECURE_COOKIES` 和 `TRUST_PROXY` 都改为 `true`。
 
-Compose 使用仓库目录下的 `data/` 和 `uploads/` 持久化内容。重新部署堆栈不会清空它们；删除堆栈或迁移 Portainer 前应先备份这两个目录。
+Portainer 部署必须设置 `DATA_VOLUME=m-j-site-data` 和 `UPLOAD_VOLUME=m-j-site-uploads`，让数据库和照片存放在 Docker 命名卷中，而不是可能被 GitOps 重新克隆的仓库目录。重新部署堆栈不会清空命名卷；删除卷或迁移 Docker 主机前仍需备份。
 
 ## 公网部署
 
