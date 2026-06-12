@@ -5,13 +5,15 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently -k \"tsx watch server/index.ts\" \"vite\"",
-    "build": "vite build && tsc -p tsconfig.server.json",
+    "build": "node scripts/generate-build-info.mjs && vite build && tsc -p tsconfig.server.json",
     "start": "node dist-server/index.js",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
     "test": "node --test --import tsx server/**/*.test.ts",
     "hash-password": "tsx server/hash-password.ts"
   },
   "dependencies": {
+    "@fontsource/noto-sans-sc": "^5.2.9",
+    "@fontsource/noto-serif-sc": "^5.2.9",
     "@vitejs/plugin-react": "latest",
     "bcryptjs": "latest",
     "cookie-parser": "latest",

@@ -206,11 +206,11 @@ function Journal({ content }: { content: Content }) {
           <div className="section-heading"><small>PHOTO POCKETS</small><h2>把平常的日子留下来</h2><p>真实照片会慢慢替换这些画面，位置先为未来留好。</p></div>
           {content.albums.map((album, albumIndex) => (
             <article className="album" key={album.id}>
-              <div className="album-title"><span>0{albumIndex + 1}</span><div><h3>{album.title}</h3><p>{album.description}</p></div></div>
+              <div className="album-title"><span>0{albumIndex + 1}</span><div><h3>{album.title}</h3>{album.eventDate && <time>{album.eventDate.replaceAll("-", ".")}</time>}<p>{album.description}</p></div></div>
               <div className="photo-grid">
                 {(album.media.length ? album.media : content.timeline.slice(albumIndex * 3, albumIndex * 3 + 3)).map((item, index) => {
                   const src = "kind" in item ? item.thumbUrl : item.imageUrl;
-                  const alt = "kind" in item ? item.caption || item.originalName : item.title;
+                  const alt = "kind" in item ? item.displayName || item.caption || item.originalName : item.title;
                   return <button className={`photo-button photo-${index + 1}`} key={item.id} onClick={() => src && setLightbox(src)}><Polaroid src={src} alt={alt} index={index + albumIndex} /></button>;
                 })}
               </div>

@@ -8,7 +8,13 @@ import { db } from "./db.js";
 const imageMimes = new Set(["image/jpeg", "image/png", "image/webp"]);
 const audioMimes = new Set(["audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/ogg"]);
 
-export async function persistUpload(file: Express.Multer.File, albumId?: number | null) {
+type UploadMetadata = {
+  displayName?: string;
+  caption?: string;
+  takenDate?: string | null;
+};
+
+export async function persistUpload(file: Express.Multer.File, albumId?: number | null, metadata: UploadMetadata = {}) {
   const id = crypto.randomUUID();
   if (imageMimes.has(file.mimetype)) {
     if (file.size > 15 * 1024 * 1024) throw new Error("单张图片不能超过 15MB");
@@ -22,9 +28,9 @@ export async function persistUpload(file: Express.Multer.File, albumId?: number 
       sharp(file.buffer).rotate().resize({ width: 560, height: 560, fit: "cover" }).webp({ quality: 78 }).toFile(path.join(config.uploadDir, thumbName))
     ]);
     const result = db.prepare(`
-      INSERT INTO media (album_id, kind, original_name, file_path, web_path, thumb_path, mime_type)
-      VALUES (?, 'image', ?, ?, ?, ?, ?)
-    `).run(albumId ?? null, file.originalname, originalName, webName, thumbName, file.mimetype);
+      INSERT INTO media (album_id, kind, original_name, file_path, web_path, thumb_path, mime_type, display_name, caption, taken_date)
+      VALUES (?, 'image', ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(albumId ?? null, file.originalname, originalName, webName, thumbName, file.mimetype, metadata.displayName || "", metadata.caption || "", metadata.takenDate || null);
     return Number(result.lastInsertRowid);
   }
 

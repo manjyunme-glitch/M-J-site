@@ -9,6 +9,7 @@ import { db, camelizeRow } from "./db.js";
 import { clearSessions, createAdminSession, createSiteSession, hasAdminAccess, hasSiteAccess, requireAdmin, requireSite } from "./auth.js";
 import { getContent } from "./content.js";
 import { persistUpload, removeMediaFiles, resolveMediaPath } from "./media.js";
+import { getDeploymentStatus } from "./version.js";
 
 export const api = Router();
 
@@ -80,8 +81,8 @@ const resourceDefinitions = {
   },
   albums: {
     table: "albums",
-    schema: z.object({ title: z.string().min(1).max(120), description: z.string().max(1000).default(""), coverMediaId: z.coerce.number().int().positive().nullable().optional().transform((value) => value || null), published: bool, sortOrder: z.coerce.number().int().default(0) }),
-    columns: ["title", "description", "cover_media_id", "published", "sort_order"]
+    schema: z.object({ title: z.string().min(1).max(120), eventDate: nullableDate, description: z.string().max(1000).default(""), coverMediaId: z.coerce.number().int().positive().nullable().optional().transform((value) => value || null), published: bool, sortOrder: z.coerce.number().int().default(0) }),
+    columns: ["title", "event_date", "description", "cover_media_id", "published", "sort_order"]
   },
   letters: {
     table: "letters",
@@ -161,15 +162,30 @@ api.put("/admin/settings", requireAdmin, (req, res) => {
   res.json(camelizeRow(db.prepare("SELECT * FROM settings WHERE id = 1").get()));
 });
 
+api.get("/admin/deployment-status", requireAdmin, async (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json(await getDeploymentStatus());
+});
+
 const upload = multer({ storage: multer.memoryStorage(), limits: { files: 30, fileSize: 30 * 1024 * 1024 } });
 
 api.post("/admin/media", requireAdmin, upload.array("files", 30), async (req, res) => {
   const files = (req.files || []) as Express.Multer.File[];
   if (!files.length) return res.status(400).json({ error: "请选择文件" });
   const albumId = req.body.albumId ? Number(req.body.albumId) : null;
+  const fieldAt = (key: string, index: number) => {
+    const value = req.body[key];
+    return Array.isArray(value) ? value[index] : index === 0 ? value : undefined;
+  };
   try {
     const ids = [];
-    for (const file of files) ids.push(await persistUpload(file, albumId));
+    for (const [index, file] of files.entries()) {
+      ids.push(await persistUpload(file, albumId, {
+        displayName: fieldAt("displayNames", index),
+        caption: fieldAt("captions", index),
+        takenDate: fieldAt("takenDates", index) || null
+      }));
+    }
     const rows = ids.map((id) => camelizeRow(db.prepare("SELECT * FROM media WHERE id = ?").get(id)));
     res.status(201).json(rows);
   } catch (error) {
@@ -179,10 +195,10 @@ api.post("/admin/media", requireAdmin, upload.array("files", 30), async (req, re
 
 api.put("/admin/media/:id", requireAdmin, (req, res) => {
   const id = Number(req.params.id);
-  const schema = z.object({ albumId: z.coerce.number().int().positive().nullable().optional().transform((value) => value || null), caption: z.string().max(1000).default(""), takenDate: nullableDate, sortOrder: z.coerce.number().int().default(0) });
+  const schema = z.object({ albumId: z.coerce.number().int().positive().nullable().optional().transform((value) => value || null), displayName: z.string().max(160).default(""), caption: z.string().max(1000).default(""), takenDate: nullableDate, sortOrder: z.coerce.number().int().default(0) });
   const parsed = schema.safeParse(req.body);
   if (!Number.isInteger(id) || !parsed.success) return res.status(400).json({ error: "媒体信息格式不正确" });
-  db.prepare("UPDATE media SET album_id = ?, caption = ?, taken_date = ?, sort_order = ? WHERE id = ?").run(parsed.data.albumId, parsed.data.caption, parsed.data.takenDate, parsed.data.sortOrder, id);
+  db.prepare("UPDATE media SET album_id = ?, display_name = ?, caption = ?, taken_date = ?, sort_order = ? WHERE id = ?").run(parsed.data.albumId, parsed.data.displayName, parsed.data.caption, parsed.data.takenDate, parsed.data.sortOrder, id);
   res.json(camelizeRow(db.prepare("SELECT * FROM media WHERE id = ?").get(id)));
 });
 

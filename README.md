@@ -37,9 +37,11 @@ docker compose logs -f love-journal
 - 纪念日：年度重复或单次日期、说明、显示状态和排序。
 - 时间线：展示日期、准确日期、正文、配图、发布状态和排序。
 - 相册：创建相册、批量上传照片、设置封面和删除照片。
+- 照片管理：上传前填写展示名称、拍摄日期和说明，上传后可继续编辑；选图时显示缩略图预览。
 - 情书：Markdown 编辑、实时预览、草稿与发布。
 - 愿望：待实现/已完成、目标日期、完成日期和配图。
 - 设置与音乐：双方资料、相识和恋爱日期、首页文字、背景音乐。
+- 部署状态：后台总览可检查当前 Docker 构建与 GitHub 最新提交是否一致。
 
 照片会生成网页图和缩略图。支持 JPEG、PNG、WebP，单张最大 15MB。音乐支持 MP3、M4A、OGG，最大 30MB。
 
@@ -76,6 +78,18 @@ docker compose up -d --build
 ```
 
 不要在 `.env` 中保存明文密码。
+
+## GitHub 更新检查
+
+默认检查 `manjyunme-glitch/M-J-site` 的 `main` 分支。公开仓库无需额外配置；私有仓库需要在 `.env` 中填写只读的 fine-grained token：
+
+```env
+GITHUB_REPOSITORY=manjyunme-glitch/M-J-site
+GITHUB_BRANCH=main
+GITHUB_TOKEN=github_pat_xxx
+```
+
+Token 只需授予目标仓库的 `Contents: Read-only`。后台只检查更新，不会调用 Portainer 或自动重新部署。
 
 ## 公网部署
 

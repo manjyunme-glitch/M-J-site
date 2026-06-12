@@ -12,6 +12,9 @@ services:
       TZ: Asia/Shanghai
       DATABASE_PATH: /app/data/love-journal.db
       UPLOAD_DIR: /app/uploads
+      GITHUB_REPOSITORY: ${GITHUB_REPOSITORY:-manjyunme-glitch/M-J-site}
+      GITHUB_BRANCH: ${GITHUB_BRANCH:-main}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
     ports:
       - "1314:1314"
     volumes:

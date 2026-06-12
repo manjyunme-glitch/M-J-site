@@ -40,6 +40,7 @@ export type Media = {
   albumId: number | null;
   kind: "image" | "audio";
   originalName: string;
+  displayName: string;
   caption: string;
   takenDate: string | null;
   sortOrder: number;
@@ -50,6 +51,7 @@ export type Media = {
 export type Album = {
   id: number;
   title: string;
+  eventDate: string | null;
   description: string;
   coverMediaId: number | null;
   coverUrl?: string | null;

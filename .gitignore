@@ -1,6 +1,7 @@
 node_modules/
 dist-client/
 dist-server/
+build-info.json
 data/*
 !data/.gitkeep
 uploads/*

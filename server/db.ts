@@ -37,6 +37,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS albums (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
+    event_date TEXT,
     description TEXT NOT NULL DEFAULT '',
     cover_media_id INTEGER,
     published INTEGER NOT NULL DEFAULT 1,
@@ -53,6 +54,7 @@ db.exec(`
     web_path TEXT,
     thumb_path TEXT,
     mime_type TEXT NOT NULL,
+    display_name TEXT NOT NULL DEFAULT '',
     caption TEXT NOT NULL DEFAULT '',
     taken_date TEXT,
     sort_order INTEGER NOT NULL DEFAULT 0,
@@ -96,6 +98,14 @@ db.exec(`
     FOREIGN KEY (media_id) REFERENCES media(id) ON DELETE SET NULL
   );
 `);
+
+const ensureColumn = (table: string, column: string, definition: string) => {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!columns.some((item) => item.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+};
+
+ensureColumn("albums", "event_date", "TEXT");
+ensureColumn("media", "display_name", "TEXT NOT NULL DEFAULT ''");
 
 const seedSettings = db.prepare(`
   INSERT OR IGNORE INTO settings (
@@ -141,9 +151,9 @@ if (count("timeline_events") === 0) {
 }
 
 if (count("albums") === 0) {
-  const insert = db.prepare("INSERT INTO albums (title, description, published, sort_order) VALUES (?, ?, 1, ?)");
-  insert.run("故事的开始", "奶茶、散步和那些普通却珍贵的下午。", 10);
-  insert.run("成为我们以后", "从 3·14 开始，收藏每一个共同画面。", 20);
+  const insert = db.prepare("INSERT INTO albums (title, event_date, description, published, sort_order) VALUES (?, ?, ?, 1, ?)");
+  insert.run("故事的开始", "2025-05-20", "奶茶、散步和那些普通却珍贵的下午。", 10);
+  insert.run("成为我们以后", "2026-03-14", "从 3·14 开始，收藏每一个共同画面。", 20);
 }
 
 if (count("letters") === 0) {
