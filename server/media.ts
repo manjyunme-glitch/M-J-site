@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import sharp from "sharp";
 import { config } from "./config.js";
 import { db } from "./db.js";
+import { normalizeUploadFilename } from "./filename.js";
 
 const imageMimes = new Set(["image/jpeg", "image/png", "image/webp"]);
 const audioMimes = new Set(["audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/ogg"]);
@@ -23,14 +24,15 @@ function normalizedDimensions(metadata: { width?: number; height?: number; orien
 
 export async function persistUpload(file: Express.Multer.File, albumId?: number | null, metadata: UploadMetadata = {}) {
   const id = crypto.randomUUID();
+  const originalName = normalizeUploadFilename(file.originalname);
   if (imageMimes.has(file.mimetype)) {
     if (file.size > 15 * 1024 * 1024) throw new Error("单张图片不能超过 15MB");
-    const originalExt = path.extname(file.originalname).toLowerCase() || ".jpg";
-    const originalName = `${id}-original${originalExt}`;
+    const originalExt = path.extname(originalName).toLowerCase() || ".jpg";
+    const storedOriginalName = `${id}-original${originalExt}`;
     const webName = `${id}-web.webp`;
     const thumbName = `${id}-thumb.webp`;
     const dimensions = normalizedDimensions(await sharp(file.buffer).metadata());
-    fs.writeFileSync(path.join(config.uploadDir, originalName), file.buffer);
+    fs.writeFileSync(path.join(config.uploadDir, storedOriginalName), file.buffer);
     await Promise.all([
       sharp(file.buffer).rotate().resize({ width: 1800, height: 1800, fit: "inside", withoutEnlargement: true }).webp({ quality: 84 }).toFile(path.join(config.uploadDir, webName)),
       sharp(file.buffer).rotate().resize({ width: 560, height: 560, fit: "contain", background: { r: 245, g: 239, b: 223, alpha: 1 } }).webp({ quality: 78 }).toFile(path.join(config.uploadDir, thumbName))
@@ -38,7 +40,7 @@ export async function persistUpload(file: Express.Multer.File, albumId?: number 
     const result = db.prepare(`
       INSERT INTO media (album_id, kind, original_name, file_path, web_path, thumb_path, mime_type, display_name, caption, taken_date, image_width, image_height)
       VALUES (?, 'image', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(albumId ?? null, file.originalname, originalName, webName, thumbName, file.mimetype, metadata.displayName || "", metadata.caption || "", metadata.takenDate || null, dimensions.width, dimensions.height);
+    `).run(albumId ?? null, originalName, storedOriginalName, webName, thumbName, file.mimetype, metadata.displayName || "", metadata.caption || "", metadata.takenDate || null, dimensions.width, dimensions.height);
     return Number(result.lastInsertRowid);
   }
 
@@ -50,11 +52,20 @@ export async function persistUpload(file: Express.Multer.File, albumId?: number 
     const result = db.prepare(`
       INSERT INTO media (album_id, kind, original_name, file_path, mime_type)
       VALUES (NULL, 'audio', ?, ?, ?)
-    `).run(file.originalname, storedName, file.mimetype);
+    `).run(originalName, storedName, file.mimetype);
     return Number(result.lastInsertRowid);
   }
 
   throw new Error("仅支持 JPEG、PNG、WebP、MP3、M4A 和 OGG 文件");
+}
+
+export function repairMediaFilenames() {
+  const rows = db.prepare("SELECT id, original_name FROM media").all() as Array<{ id: number; original_name: string }>;
+  const update = db.prepare("UPDATE media SET original_name = ? WHERE id = ?");
+  for (const row of rows) {
+    const normalized = normalizeUploadFilename(row.original_name);
+    if (normalized !== row.original_name) update.run(normalized, row.id);
+  }
 }
 
 export async function backfillMediaDimensions() {

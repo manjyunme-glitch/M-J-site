@@ -6,3 +6,4 @@ uploads
 .git
 .env
 npm-debug.log*
+.tmp-*

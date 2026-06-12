@@ -5,7 +5,7 @@ import helmet from "helmet";
 import { config } from "./config.js";
 import { api } from "./routes.js";
 import { seedArtwork } from "./seed-artwork.js";
-import { backfillMediaDimensions } from "./media.js";
+import { backfillMediaDimensions, repairMediaFilenames } from "./media.js";
 
 const app = express();
 if (config.trustProxy) app.set("trust proxy", 1);
@@ -40,6 +40,7 @@ app.use(express.static(clientDir, { index: false, maxAge: config.nodeEnv === "pr
 app.use((_req, res) => res.sendFile(path.join(clientDir, "index.html")));
 
 await seedArtwork();
+repairMediaFilenames();
 await backfillMediaDimensions();
 
 app.listen(config.port, "0.0.0.0", () => {

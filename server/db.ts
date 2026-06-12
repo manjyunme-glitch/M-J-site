@@ -100,12 +100,27 @@ db.exec(`
     sort_order INTEGER NOT NULL DEFAULT 0
   );
 
+  CREATE TABLE IF NOT EXISTS homepage_blocks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    block_type TEXT NOT NULL CHECK (block_type IN ('hero', 'nextDate', 'profiles', 'secrets', 'contents', 'ending', 'questionDraw', 'memoryMatch', 'anniversaryDraw')),
+    enabled INTEGER NOT NULL DEFAULT 1,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    config_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE UNIQUE INDEX IF NOT EXISTS homepage_blocks_singletons
+  ON homepage_blocks(block_type)
+  WHERE block_type IN ('hero', 'nextDate', 'profiles', 'secrets', 'contents', 'ending');
+
   CREATE TABLE IF NOT EXISTS homepage_secret_cards (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     number_text TEXT NOT NULL,
     title TEXT NOT NULL,
     body TEXT NOT NULL,
     accent TEXT NOT NULL DEFAULT 'blue' CHECK (accent IN ('blue', 'ticket', 'red')),
+    reveal_style TEXT NOT NULL DEFAULT 'flip' CHECK (reveal_style IN ('flip', 'envelope', 'scratch', 'ticket')),
     enabled INTEGER NOT NULL DEFAULT 1,
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -157,6 +172,7 @@ ensureColumn("albums", "event_date", "TEXT");
 ensureColumn("media", "display_name", "TEXT NOT NULL DEFAULT ''");
 ensureColumn("media", "image_width", "INTEGER");
 ensureColumn("media", "image_height", "INTEGER");
+ensureColumn("homepage_secret_cards", "reveal_style", "TEXT NOT NULL DEFAULT 'flip'");
 
 const seedSettings = db.prepare(`
   INSERT OR IGNORE INTO settings (
@@ -215,6 +231,12 @@ const count = (table: string) => Number((db.prepare(`SELECT COUNT(*) AS count FR
 if (count("homepage_modules") === 0) {
   const insert = db.prepare("INSERT INTO homepage_modules (module_key, enabled, sort_order) VALUES (?, 1, ?)");
   ["hero", "nextDate", "profiles", "secrets", "contents", "ending"].forEach((key, index) => insert.run(key, (index + 1) * 10));
+}
+
+if (count("homepage_blocks") === 0) {
+  const insert = db.prepare("INSERT INTO homepage_blocks (block_type, enabled, sort_order, config_json) VALUES (?, ?, ?, '{}')");
+  const legacyModules = db.prepare("SELECT module_key, enabled, sort_order FROM homepage_modules ORDER BY sort_order").all() as Array<{ module_key: string; enabled: number; sort_order: number }>;
+  legacyModules.forEach((module) => insert.run(module.module_key, module.enabled, module.sort_order));
 }
 
 if (count("homepage_secret_cards") === 0) {

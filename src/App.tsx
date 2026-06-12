@@ -2,11 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
-import { BookOpen, CalendarDays, ChevronDown, Eye, EyeOff, Heart, Home, Images, ListChecks, LockKeyhole, Mail, Pause, Play, Sparkles, X } from "lucide-react";
+import { BookOpen, CalendarDays, ChevronDown, Eye, EyeOff, Heart, Home, Images, ListChecks, LockKeyhole, Mail, Pause, Play, RefreshCw, Shuffle, Sparkles, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { api, jsonBody } from "./api";
-import type { Album, Anniversary, Content, HomepageModuleKey, Letter } from "./types";
+import type { Album, Anniversary, Content, HomepageCoreType, HomepageModule, Letter } from "./types";
 
 gsap.registerPlugin(ScrollTrigger, useGSAP);
 
@@ -148,16 +148,61 @@ function AnimatedPage({ children, className = "" }: { children: React.ReactNode;
   return <main ref={root} className={`journal-page ${className}`}>{children}</main>;
 }
 
-function NumberSecret({ number, title, children, variant }: { number: string; title: string; children: React.ReactNode; variant: string }) {
+function NumberSecret({ number, title, children, variant, revealStyle }: { number: string; title: string; children: React.ReactNode; variant: string; revealStyle: string }) {
   const [open, setOpen] = useState(false);
   return (
-    <button className={`number-secret ${variant} ${open ? "is-open" : ""}`} onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+    <button className={`number-secret ${variant} reveal-${revealStyle} ${open ? "is-open" : ""}`} onClick={() => setOpen((value) => !value)} aria-expanded={open}>
       <span className="number-secret-inner">
         <span className="number-face" aria-hidden={open}><b>{number}</b><small>轻触翻开</small></span>
         <span className="number-back" aria-hidden={!open}><strong>{title}</strong><span>{children}</span><small>轻触收起这页</small></span>
       </span>
     </button>
   );
+}
+
+type QuestionDrawConfig = { eyebrow: string; title: string; description: string; buttonLabel: string; questions: string[] };
+type MemoryMatchConfig = { eyebrow: string; title: string; description: string; pairs: string[] };
+type AnniversaryDrawConfig = { eyebrow: string; title: string; description: string; buttonLabel: string; options: string[] };
+
+function PlayfulHeading({ eyebrow, title, description }: { eyebrow: string; title: string; description: string }) {
+  return <div className="section-heading"><small>{eyebrow}</small><h2>{title}</h2><p>{description}</p></div>;
+}
+
+function QuestionDraw({ config }: { config: QuestionDrawConfig }) {
+  const [index, setIndex] = useState<number | null>(null);
+  const draw = () => setIndex((current) => {
+    const choices = config.questions.map((_, itemIndex) => itemIndex).filter((itemIndex) => itemIndex !== current);
+    return choices[Math.floor(Math.random() * choices.length)] ?? 0;
+  });
+  return <section className="playful-module question-draw scrapbook-section" data-reveal><PlayfulHeading eyebrow={config.eyebrow} title={config.title} description={config.description} /><div className={`question-slip ${index !== null ? "is-drawn" : ""}`} aria-live="polite"><small>{index === null ? "WAITING FOR A QUESTION" : `QUESTION ${String(index + 1).padStart(2, "0")}`}</small><strong>{index === null ? "把一张空白纸条留给此刻。" : config.questions[index]}</strong></div><button className="paper-button playful-action" type="button" onClick={draw}><Shuffle size={17} /> {config.buttonLabel}</button></section>;
+}
+
+function shuffleLabels(labels: string[]) {
+  return labels.flatMap((label, pair) => [{ label, key: `${pair}-a` }, { label, key: `${pair}-b` }]).sort(() => Math.random() - .5);
+}
+
+function MemoryMatch({ config }: { config: MemoryMatchConfig }) {
+  const [cards, setCards] = useState(() => shuffleLabels(config.pairs));
+  const [open, setOpen] = useState<number[]>([]);
+  const [matched, setMatched] = useState<string[]>([]);
+  useEffect(() => { setCards(shuffleLabels(config.pairs)); setOpen([]); setMatched([]); }, [config.pairs.join("|")]);
+  const choose = (index: number) => {
+    if (open.includes(index) || matched.includes(cards[index].label) || open.length >= 2) return;
+    const next = [...open, index];
+    setOpen(next);
+    if (next.length === 2) {
+      if (cards[next[0]].label === cards[next[1]].label) { setMatched((current) => [...current, cards[next[0]].label]); setOpen([]); }
+      else window.setTimeout(() => setOpen([]), 650);
+    }
+  };
+  const reset = () => { setCards(shuffleLabels(config.pairs)); setOpen([]); setMatched([]); };
+  return <section className="playful-module memory-match scrapbook-section" data-reveal><PlayfulHeading eyebrow={config.eyebrow} title={config.title} description={config.description} /><div className="memory-board">{cards.map((card, index) => { const visible = open.includes(index) || matched.includes(card.label); return <button type="button" key={card.key} className={visible ? "is-visible" : ""} onClick={() => choose(index)} aria-label={visible ? card.label : `翻开第 ${index + 1} 张记忆卡`} disabled={matched.includes(card.label)}><span>{visible ? card.label : String(index + 1).padStart(2, "0")}</span></button>; })}</div><div className="game-status" aria-live="polite"><span>{matched.length === config.pairs.length ? "所有记忆都配成了一对。" : `已经找到 ${matched.length} / ${config.pairs.length} 对`}</span><button type="button" onClick={reset} aria-label="重新开始记忆配对"><RefreshCw size={16} /></button></div></section>;
+}
+
+function AnniversaryDraw({ config }: { config: AnniversaryDrawConfig }) {
+  const [result, setResult] = useState<string | null>(null);
+  const draw = () => setResult(config.options[Math.floor(Math.random() * config.options.length)] || null);
+  return <section className="playful-module anniversary-draw scrapbook-section" data-reveal><PlayfulHeading eyebrow={config.eyebrow} title={config.title} description={config.description} /><div className="draw-box"><div className={result ? "draw-ticket is-picked" : "draw-ticket"} aria-live="polite"><small>OUR NEXT LITTLE PLAN</small><strong>{result || "抽一张属于下一次见面的安排"}</strong></div><button type="button" className="paper-button playful-action" onClick={draw}><Shuffle size={17} /> {config.buttonLabel}</button></div></section>;
 }
 
 function mediaAspectClass(width?: number | null, height?: number | null) {
@@ -290,7 +335,7 @@ function HomePage({ content }: { content: Content }) {
   const heroWidth = home.heroMediaUrl ? home.heroMediaWidth : fallbackHero?.imageWidth;
   const heroHeight = home.heroMediaUrl ? home.heroMediaHeight : fallbackHero?.imageHeight;
 
-  const sections: Record<HomepageModuleKey, React.ReactNode> = {
+  const sections: Record<HomepageCoreType, React.ReactNode> = {
     hero: <section className="hero scrapbook-section" key="hero">
       <div className="hero-copy" data-page-intro>
         <span className="eyebrow">{home.heroEyebrow}</span>
@@ -321,7 +366,7 @@ function HomePage({ content }: { content: Content }) {
     </section>,
     secrets: <section className="numbers scrapbook-section" aria-labelledby="number-title" data-reveal key="secrets">
       <div className="section-heading"><small>{home.secretsEyebrow}</small><h2 id="number-title">{home.secretsTitle}</h2><p>{home.secretsDescription}</p></div>
-      <div className="number-grid" data-stagger>{content.homepage.secrets.map((secret) => <NumberSecret key={secret.id} number={secret.numberText} title={secret.title} variant={`secret-${secret.accent}`}>{secret.body}</NumberSecret>)}</div>
+      <div className="number-grid" data-stagger>{content.homepage.secrets.map((secret) => <NumberSecret key={secret.id} number={secret.numberText} title={secret.title} variant={`secret-${secret.accent}`} revealStyle={secret.revealStyle}>{secret.body}</NumberSecret>)}</div>
     </section>,
     contents: <section className="home-index scrapbook-section" data-reveal key="contents">
       <div className="section-heading"><small>{home.contentsEyebrow}</small><h2>{home.contentsTitle}</h2><p>{home.contentsDescription}</p></div>
@@ -335,9 +380,17 @@ function HomePage({ content }: { content: Content }) {
     ending: <section className="ending scrapbook-section" data-reveal key="ending"><Sparkles /><p>{home.endingKicker}</p><h2>{home.endingHeadline}</h2><span>{home.endingSignature}</span></section>
   };
 
+  const renderModule = (module: HomepageModule) => {
+    if (module.blockType in sections) return sections[module.blockType as HomepageCoreType];
+    if (module.blockType === "questionDraw") return <QuestionDraw key={module.id} config={module.config as QuestionDrawConfig} />;
+    if (module.blockType === "memoryMatch") return <MemoryMatch key={module.id} config={module.config as MemoryMatchConfig} />;
+    if (module.blockType === "anniversaryDraw") return <AnniversaryDraw key={module.id} config={module.config as AnniversaryDrawConfig} />;
+    return null;
+  };
+
   return (
     <AnimatedPage className="home-page">
-      {content.homepage.modules.filter((module) => module.enabled).sort((a, b) => a.sortOrder - b.sortOrder).map((module) => sections[module.moduleKey])}
+      {content.homepage.modules.filter((module) => module.enabled).sort((a, b) => a.sortOrder - b.sortOrder).map(renderModule)}
     </AnimatedPage>
   );
 }

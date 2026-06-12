@@ -96,8 +96,8 @@ const resourceDefinitions = {
   },
   homeSecrets: {
     table: "homepage_secret_cards",
-    schema: z.object({ numberText: z.string().min(1).max(24), title: z.string().min(1).max(120), body: z.string().min(1).max(1200), accent: z.enum(["blue", "ticket", "red"]), enabled: bool, sortOrder: z.coerce.number().int().default(0) }),
-    columns: ["number_text", "title", "body", "accent", "enabled", "sort_order"]
+    schema: z.object({ numberText: z.string().min(1).max(24), title: z.string().min(1).max(120), body: z.string().min(1).max(1200), accent: z.enum(["blue", "ticket", "red"]), revealStyle: z.enum(["flip", "envelope", "scratch", "ticket"]), enabled: bool, sortOrder: z.coerce.number().int().default(0) }),
+    columns: ["number_text", "title", "body", "accent", "reveal_style", "enabled", "sort_order"]
   }
 } as const;
 
@@ -167,7 +167,19 @@ api.put("/admin/settings", requireAdmin, (req, res) => {
   res.json(camelizeRow(db.prepare("SELECT * FROM settings WHERE id = 1").get()));
 });
 
-const homepageModuleKeys = ["hero", "nextDate", "profiles", "secrets", "contents", "ending"] as const;
+const homepageCoreTypes = ["hero", "nextDate", "profiles", "secrets", "contents", "ending"] as const;
+const homepageInteractiveTypes = ["questionDraw", "memoryMatch", "anniversaryDraw"] as const;
+const homepageBlockTypes = [...homepageCoreTypes, ...homepageInteractiveTypes] as const;
+const questionDrawConfigSchema = z.object({ eyebrow: z.string().max(80), title: z.string().min(1).max(120), description: z.string().max(300), buttonLabel: z.string().min(1).max(40), questions: z.array(z.string().min(1).max(180)).min(2).max(30) });
+const memoryMatchConfigSchema = z.object({ eyebrow: z.string().max(80), title: z.string().min(1).max(120), description: z.string().max(300), pairs: z.array(z.string().min(1).max(24)).min(2).max(8) });
+const anniversaryDrawConfigSchema = z.object({ eyebrow: z.string().max(80), title: z.string().min(1).max(120), description: z.string().max(300), buttonLabel: z.string().min(1).max(40), options: z.array(z.string().min(1).max(100)).min(2).max(20) });
+const blockConfigSchemas = { questionDraw: questionDrawConfigSchema, memoryMatch: memoryMatchConfigSchema, anniversaryDraw: anniversaryDrawConfigSchema } as const;
+const defaultBlockConfigs = {
+  questionDraw: { eyebrow: "ONE QUESTION", title: "今天想问彼此什么？", description: "抽一张问题纸条，轮流认真回答。", buttonLabel: "抽一张", questions: ["最近哪一刻让你觉得被在意？", "下一次约会最想去哪里？", "有哪句话一直想对我说？"] },
+  memoryMatch: { eyebrow: "MEMORY PAIRS", title: "把我们的记忆配成一对", description: "翻开相同的词语，把普通日子重新想一遍。", pairs: ["奶茶", "散步", "晚饭", "晚安"] },
+  anniversaryDraw: { eyebrow: "DATE DRAW", title: "下一次约会做什么？", description: "从我们都愿意做的小事里抽一张。", buttonLabel: "开始抽签", options: ["一起看日落", "散步后吃甜品", "挑一部电影", "去没走过的街道"] }
+} as const;
+const homepageBlockSchema = z.object({ id: z.coerce.number().int().positive(), blockType: z.enum(homepageBlockTypes), enabled: bool, sortOrder: z.coerce.number().int(), config: z.record(z.string(), z.unknown()).default({}) });
 const homepageSchema = z.object({
   settings: z.object({
     heroEyebrow: z.string().max(120),
@@ -195,13 +207,25 @@ const homepageSchema = z.object({
     endingHeadline: z.string().max(200),
     endingSignature: z.string().max(200)
   }),
-  modules: z.array(z.object({ moduleKey: z.enum(homepageModuleKeys), enabled: bool, sortOrder: z.coerce.number().int() })).length(homepageModuleKeys.length)
+  modules: z.array(homepageBlockSchema).min(homepageCoreTypes.length).max(24)
 });
 
 api.put("/admin/homepage", requireAdmin, (req, res) => {
   const parsed = homepageSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message || "首页配置格式不正确" });
-  if (new Set(parsed.data.modules.map((item) => item.moduleKey)).size !== homepageModuleKeys.length) return res.status(400).json({ error: "首页模块不能重复" });
+  for (const type of homepageCoreTypes) {
+    if (parsed.data.modules.filter((item) => item.blockType === type).length !== 1) return res.status(400).json({ error: "固定首页模块必须各保留一个" });
+  }
+  const normalizedModules = [];
+  for (const module of parsed.data.modules) {
+    const schema = blockConfigSchemas[module.blockType as keyof typeof blockConfigSchemas];
+    if (!schema) normalizedModules.push({ ...module, config: {} });
+    else {
+      const config = schema.safeParse(module.config);
+      if (!config.success) return res.status(400).json({ error: `${module.blockType} 配置不完整` });
+      normalizedModules.push({ ...module, config: config.data });
+    }
+  }
   if (parsed.data.settings.heroMediaId) {
     const media = db.prepare("SELECT id FROM media WHERE id = ? AND kind = 'image'").get(parsed.data.settings.heroMediaId);
     if (!media) return res.status(400).json({ error: "首页主图不存在或不是图片" });
@@ -222,13 +246,32 @@ api.put("/admin/homepage", requireAdmin, (req, res) => {
       values.nextKicker, values.nextPrefix, values.nextFallback, values.secretsEyebrow, values.secretsTitle, values.secretsDescription,
       values.contentsEyebrow, values.contentsTitle, values.contentsDescription, values.endingKicker, values.endingHeadline, values.endingSignature
     );
-    const updateModule = db.prepare("UPDATE homepage_modules SET enabled = ?, sort_order = ? WHERE module_key = ?");
-    parsed.data.modules.forEach((item) => updateModule.run(item.enabled, item.sortOrder, item.moduleKey));
+    const updateModule = db.prepare("UPDATE homepage_blocks SET enabled = ?, sort_order = ?, config_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND block_type = ?");
+    normalizedModules.forEach((item) => updateModule.run(item.enabled, item.sortOrder, JSON.stringify(item.config), item.id, item.blockType));
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
     return res.status(400).json({ error: error instanceof Error ? error.message : "首页配置保存失败" });
   }
+  res.json({ ok: true });
+});
+
+api.post("/admin/homepage/modules", requireAdmin, (req, res) => {
+  const parsed = z.object({ blockType: z.enum(homepageInteractiveTypes) }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "请选择可添加的互动模块" });
+  const blockCount = Number((db.prepare("SELECT COUNT(*) AS value FROM homepage_blocks").get() as { value: number }).value);
+  if (blockCount >= 24) return res.status(400).json({ error: "首页最多保留 24 个模块" });
+  const sortOrder = Number((db.prepare("SELECT COALESCE(MAX(sort_order), 0) AS value FROM homepage_blocks").get() as { value: number }).value) + 10;
+  const result = db.prepare("INSERT INTO homepage_blocks (block_type, enabled, sort_order, config_json) VALUES (?, 1, ?, ?)").run(parsed.data.blockType, sortOrder, JSON.stringify(defaultBlockConfigs[parsed.data.blockType]));
+  res.status(201).json({ id: Number(result.lastInsertRowid) });
+});
+
+api.delete("/admin/homepage/modules/:id", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const row = db.prepare("SELECT block_type FROM homepage_blocks WHERE id = ?").get(id) as { block_type: string } | undefined;
+  if (!row) return res.status(404).json({ error: "首页模块不存在" });
+  if ((homepageCoreTypes as readonly string[]).includes(row.block_type)) return res.status(400).json({ error: "固定模块只能隐藏，不能删除" });
+  db.prepare("DELETE FROM homepage_blocks WHERE id = ?").run(id);
   res.json({ ok: true });
 });
 

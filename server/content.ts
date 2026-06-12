@@ -11,7 +11,7 @@ export function getContent(includeDrafts = false) {
   const letters = camelizeRow(db.prepare(`SELECT * FROM letters ${includeDrafts ? "" : "WHERE published = 1"} ORDER BY sort_order, id`).all()) as Array<Record<string, unknown>>;
   const wishes = camelizeRow(db.prepare("SELECT * FROM wishes ORDER BY sort_order, id").all()) as Array<Record<string, unknown>>;
   const homepageSettings = camelizeRow(db.prepare("SELECT * FROM homepage_settings WHERE id = 1").get()) as Record<string, any>;
-  const homepageModules = camelizeRow(db.prepare(`SELECT * FROM homepage_modules ${includeDrafts ? "" : "WHERE enabled = 1"} ORDER BY sort_order, module_key`).all()) as Array<Record<string, unknown>>;
+  const homepageModules = camelizeRow(db.prepare(`SELECT * FROM homepage_blocks ${includeDrafts ? "" : "WHERE enabled = 1"} ORDER BY sort_order, id`).all()) as Array<Record<string, any>>;
   const homepageSecrets = camelizeRow(db.prepare(`SELECT * FROM homepage_secret_cards ${includeDrafts ? "" : "WHERE enabled = 1"} ORDER BY sort_order, id`).all()) as Array<Record<string, unknown>>;
 
   const media = allMedia.map((item): Record<string, any> => ({
@@ -50,7 +50,10 @@ export function getContent(includeDrafts = false) {
         heroMediaWidth: heroMedia?.imageWidth || null,
         heroMediaHeight: heroMedia?.imageHeight || null
       },
-      modules: homepageModules,
+      modules: homepageModules.map(({ configJson, ...module }) => {
+        try { return { ...module, config: JSON.parse(String(configJson || "{}")) }; }
+        catch { return { ...module, config: {} }; }
+      }),
       secrets: homepageSecrets
     },
     media: includeDrafts ? media : undefined

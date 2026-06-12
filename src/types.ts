@@ -52,7 +52,9 @@ export type Media = {
   thumbUrl?: string | null;
 };
 
-export type HomepageModuleKey = "hero" | "nextDate" | "profiles" | "secrets" | "contents" | "ending";
+export type HomepageCoreType = "hero" | "nextDate" | "profiles" | "secrets" | "contents" | "ending";
+export type HomepageInteractiveType = "questionDraw" | "memoryMatch" | "anniversaryDraw";
+export type HomepageBlockType = HomepageCoreType | HomepageInteractiveType;
 
 export type HomepageSettings = {
   id: number;
@@ -86,9 +88,11 @@ export type HomepageSettings = {
 };
 
 export type HomepageModule = {
-  moduleKey: HomepageModuleKey;
+  id: number;
+  blockType: HomepageBlockType;
   enabled: number;
   sortOrder: number;
+  config: Record<string, unknown>;
 };
 
 export type HomepageSecret = {
@@ -97,6 +101,7 @@ export type HomepageSecret = {
   title: string;
   body: string;
   accent: "blue" | "ticket" | "red";
+  revealStyle: "flip" | "envelope" | "scratch" | "ticket";
   enabled: number;
   sortOrder: number;
 };
