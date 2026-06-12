@@ -132,7 +132,7 @@ GITHUB_TOKEN=github_pat_xxx
 
 两个密码值可在项目目录运行 `npm run hash-password -- <密码>` 生成。仓库拉取认证和 `GITHUB_TOKEN` 可以使用同一个只读 token。使用 HTTPS 反向代理后，将 `SECURE_COOKIES` 和 `TRUST_PROXY` 都改为 `true`。
 
-Portainer 部署必须设置 `DATA_VOLUME=m-j-site-data` 和 `UPLOAD_VOLUME=m-j-site-uploads`，让数据库和照片存放在 Docker 命名卷中，而不是可能被 GitOps 重新克隆的仓库目录。重新部署堆栈不会清空命名卷；删除卷或迁移 Docker 主机前仍需备份。
+Compose 默认使用 `m-j-site-data` 和 `m-j-site-uploads` 两个 Docker 命名卷，让数据库和照片脱离可能被 GitOps 重新克隆的仓库目录。容器启动时会自动修复卷目录权限，再以非 root 用户运行应用。重新部署堆栈不会清空命名卷；删除卷或迁移 Docker 主机前仍需备份。本地开发如需使用项目目录，可覆盖为 `DATA_VOLUME=./data` 和 `UPLOAD_VOLUME=./uploads`。
 
 服务使用 Docker 主机现有的 `bridge` 网络，不再创建 Compose 独立网络，便于 Cloudflare Tunnel 通过 `192.168.0.113:1314` 访问。这个站点只有一个容器，不依赖 Compose 服务名解析。
 

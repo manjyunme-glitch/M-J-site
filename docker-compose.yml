@@ -26,8 +26,8 @@ services:
     ports:
       - "1314:1314"
     volumes:
-      - ${DATA_VOLUME:-./data}:/app/data
-      - ${UPLOAD_VOLUME:-./uploads}:/app/uploads
+      - ${DATA_VOLUME:-m-j-site-data}:/app/data
+      - ${UPLOAD_VOLUME:-m-j-site-uploads}:/app/uploads
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:1314/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 30s
