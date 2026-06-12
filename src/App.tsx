@@ -6,7 +6,7 @@ import { BookOpen, CalendarDays, ChevronDown, Eye, EyeOff, Heart, Home, Images, 
 import ReactMarkdown from "react-markdown";
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { api, jsonBody } from "./api";
-import type { Album, Anniversary, Content, Letter } from "./types";
+import type { Album, Anniversary, Content, HomepageModuleKey, Letter } from "./types";
 
 gsap.registerPlugin(ScrollTrigger, useGSAP);
 
@@ -111,9 +111,13 @@ function AnimatedPage({ children, className = "" }: { children: React.ReactNode;
   useGSAP(() => {
     const media = gsap.matchMedia();
     media.add("(prefers-reduced-motion: no-preference)", () => {
-      gsap.timeline({ defaults: { ease: "power2.out" } })
-        .from("[data-page-intro] > *", { autoAlpha: 0, y: 18, duration: 0.58, stagger: 0.055 })
-        .from("[data-page-art]", { autoAlpha: 0, y: 22, rotate: 1.5, duration: 0.68 }, "<0.1");
+      const intro = gsap.utils.toArray<HTMLElement>("[data-page-intro] > *");
+      const art = gsap.utils.toArray<HTMLElement>("[data-page-art]");
+      if (intro.length || art.length) {
+        const timeline = gsap.timeline({ defaults: { ease: "power2.out" } });
+        if (intro.length) timeline.from(intro, { autoAlpha: 0, y: 18, duration: 0.58, stagger: 0.055 });
+        if (art.length) timeline.from(art, { autoAlpha: 0, y: 22, rotate: 1.5, duration: 0.68 }, intro.length ? "<0.1" : 0);
+      }
 
       gsap.utils.toArray<HTMLElement>("[data-reveal]").forEach((element) => {
         gsap.from(element, {
@@ -126,7 +130,9 @@ function AnimatedPage({ children, className = "" }: { children: React.ReactNode;
       });
 
       gsap.utils.toArray<HTMLElement>("[data-stagger]").forEach((container) => {
-        gsap.from(Array.from(container.children), {
+        const children = Array.from(container.children);
+        if (!children.length) return;
+        gsap.from(children, {
           autoAlpha: 0,
           y: 18,
           duration: 0.52,
@@ -154,13 +160,26 @@ function NumberSecret({ number, title, children, variant }: { number: string; ti
   );
 }
 
-function Polaroid({ src, alt, index }: { src?: string | null; alt: string; index: number }) {
-  return (
-    <figure className={`polaroid rotate-${index % 3}`}>
-      {src ? <img src={src} alt={alt} /> : <div className={`drawn-placeholder scene-${index % 6}`} aria-label={`${alt}的插画占位`}><span /></div>}
+function mediaAspectClass(width?: number | null, height?: number | null) {
+  if (!width || !height) return "aspect-standard";
+  const ratio = width / height;
+  if (ratio < .55) return "aspect-tall";
+  if (ratio < .9) return "aspect-portrait";
+  if (ratio > 1.9) return "aspect-wide";
+  if (ratio > 1.15) return "aspect-landscape";
+  return "aspect-square";
+}
+
+function Polaroid({ src, alt, index, width, height, onOpen }: { src?: string | null; alt: string; index: number; width?: number | null; height?: number | null; onOpen?: () => void }) {
+  const figure = (
+    <figure className={`polaroid rotate-${index % 3} ${mediaAspectClass(width, height)}`}>
+      <span className="polaroid-media">
+        {src ? <img src={src} alt={alt} width={width || undefined} height={height || undefined} /> : <span className={`drawn-placeholder scene-${index % 6}`} aria-label={`${alt}的插画占位`}><i /></span>}
+      </span>
       <figcaption>{alt}</figcaption>
     </figure>
   );
+  return onOpen ? <button type="button" className="polaroid-button" onClick={onOpen} aria-label={`查看大图：${alt}`}>{figure}</button> : figure;
 }
 
 function MusicPlayer({ src }: { src?: string | null }) {
@@ -188,9 +207,58 @@ function MusicPlayer({ src }: { src?: string | null }) {
 }
 
 function SiteNavigation() {
+  const [hidden, setHidden] = useState(false);
+  const location = useLocation();
+  useEffect(() => {
+    setHidden(false);
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    let lastY = Math.max(0, window.scrollY);
+    let downDistance = 0;
+    let upDistance = 0;
+    let frame = 0;
+    const showHeader = () => {
+      downDistance = 0;
+      setHidden(false);
+    };
+    const evaluateScroll = () => {
+      frame = 0;
+      const currentY = Math.max(0, window.scrollY);
+      const delta = currentY - lastY;
+      lastY = currentY;
+      if (reducedMotion.matches || currentY <= 12) {
+        showHeader();
+        return;
+      }
+      if (Math.abs(delta) < 4) return;
+      if (delta > 0) {
+        downDistance += delta;
+        upDistance = 0;
+        if (currentY > 72 && downDistance >= 24) setHidden(true);
+      } else {
+        upDistance += Math.abs(delta);
+        downDistance = 0;
+        if (upDistance >= 10) showHeader();
+      }
+    };
+    const onScroll = () => {
+      if (!frame) frame = window.requestAnimationFrame(evaluateScroll);
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") showHeader();
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    reducedMotion.addEventListener("change", showHeader);
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      reducedMotion.removeEventListener("change", showHeader);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, [location.pathname]);
   return (
     <>
-      <header className="site-header">
+      <header className={`site-header ${hidden ? "is-hidden" : ""}`} onFocus={() => setHidden(false)} onPointerDown={() => setHidden(false)}>
         <Link to="/" className="wordmark">M <i /> J</Link>
         <nav aria-label="主要导航">
           {navigation.slice(1).map((item) => <NavLink key={item.to} to={item.to} className={({ isActive }) => isActive ? "active" : ""}>{item.label}</NavLink>)}
@@ -210,71 +278,71 @@ function PageHeading({ eyebrow, title, description }: { eyebrow: string; title: 
 
 function HomePage({ content }: { content: Content }) {
   const { settings } = content;
+  const home = content.homepage.settings;
   const today = shanghaiDate();
   const knownDays = daysBetween(settings.metDate, today);
   const loveDays = daysBetween(settings.togetherDate, today);
   const duration = calendarDuration(settings.togetherDate, today);
   const next = useMemo(() => nextAnniversary(content.anniversaries), [content.anniversaries]);
   const pendingWishes = content.wishes.filter((wish) => wish.status === "pending").length;
+  const fallbackHero = content.timeline.at(-1) || content.timeline[0];
+  const heroUrl = home.heroMediaUrl || fallbackHero?.imageUrl;
+  const heroWidth = home.heroMediaUrl ? home.heroMediaWidth : fallbackHero?.imageWidth;
+  const heroHeight = home.heroMediaUrl ? home.heroMediaHeight : fallbackHero?.imageHeight;
+
+  const sections: Record<HomepageModuleKey, React.ReactNode> = {
+    hero: <section className="hero scrapbook-section" key="hero">
+      <div className="hero-copy" data-page-intro>
+        <span className="eyebrow">{home.heroEyebrow}</span>
+        {home.heroTitle ? <h1>{home.heroTitle}</h1> : <h1>{settings.manName}<span>{home.heroJoiner}</span>{settings.womanName}</h1>}
+        <p className="hero-subtitle">{home.heroSubtitle}</p>
+        <div className="hero-stats">
+          <div><b>{knownDays}</b><span>相识的日子</span></div>
+          <div><b>{loveDays}</b><span>成为恋人的日子</span></div>
+          <div><b>{duration.years}<em>年</em>{duration.months}<em>月</em>{duration.days}<em>天</em></b><span>认真相爱至今</span></div>
+        </div>
+        <Link className="paper-button" to={home.heroCtaTarget}>{home.heroCtaLabel} <ChevronDown size={18} /></Link>
+      </div>
+      <div className="hero-collage" data-page-art>
+        <Polaroid src={heroUrl} alt={home.heroMediaCaption} index={1} width={heroWidth} height={heroHeight} />
+        <div className="date-stamp">SINCE<br /><b>{settings.togetherDate.replaceAll("-", ".")}</b></div>
+        <span className="doodle-heart"><Heart /></span>
+      </div>
+      <div className="thread thread-blue" /><div className="thread thread-red" />
+    </section>,
+    nextDate: <section className="next-date scrapbook-section" data-reveal key="nextDate">
+      <div className="section-kicker"><CalendarDays size={18} /> {home.nextKicker}</div>
+      {next ? <><p>{home.nextPrefix}「{next.title}」还有</p><strong>{next.remaining}<span>天</span></strong><small>{next.nextDate.replaceAll("-", ".")} · {next.description}</small></> : <p>{home.nextFallback}</p>}
+    </section>,
+    profiles: <section className="people scrapbook-section" data-stagger key="profiles">
+      <div className="person-card blue-note"><span className="tape tape-blue" /><small>ABOUT HIM</small><h2>{settings.manName}</h2><i>“{home.manQuote}”</i></div>
+      <div className="between-note"><span>{home.profilesIntro}</span><Heart /><b>{home.profilesOutro}</b></div>
+      <div className="person-card red-note"><span className="tape tape-red" /><small>ABOUT HER</small><h2>{settings.womanName}</h2><i>“{home.womanQuote}”</i></div>
+    </section>,
+    secrets: <section className="numbers scrapbook-section" aria-labelledby="number-title" data-reveal key="secrets">
+      <div className="section-heading"><small>{home.secretsEyebrow}</small><h2 id="number-title">{home.secretsTitle}</h2><p>{home.secretsDescription}</p></div>
+      <div className="number-grid" data-stagger>{content.homepage.secrets.map((secret) => <NumberSecret key={secret.id} number={secret.numberText} title={secret.title} variant={`secret-${secret.accent}`}>{secret.body}</NumberSecret>)}</div>
+    </section>,
+    contents: <section className="home-index scrapbook-section" data-reveal key="contents">
+      <div className="section-heading"><small>{home.contentsEyebrow}</small><h2>{home.contentsTitle}</h2><p>{home.contentsDescription}</p></div>
+      <div className="home-index-grid" data-stagger>
+        <Link to="/stories"><BookOpen /><small>STORIES · {content.timeline.length}</small><h3>故事</h3><p>{content.timeline.at(-1)?.title || "从第一章开始读"}</p><span>进入时间线 →</span></Link>
+        <Link to="/gallery"><Images /><small>ALBUMS · {content.albums.length}</small><h3>相册</h3><p>{content.albums.at(-1)?.title || "把平常的日子留下"}</p><span>翻看相册 →</span></Link>
+        <Link to="/letters"><Mail /><small>LETTERS · {content.letters.length}</small><h3>情书</h3><p>{content.letters.at(-1)?.title || "打开写给彼此的话"}</p><span>拆开信封 →</span></Link>
+        <Link to="/wishes"><ListChecks /><small>PENDING · {pendingWishes}</small><h3>愿望</h3><p>把未来拆成可以一起期待的小事。</p><span>查看愿望 →</span></Link>
+      </div>
+    </section>,
+    ending: <section className="ending scrapbook-section" data-reveal key="ending"><Sparkles /><p>{home.endingKicker}</p><h2>{home.endingHeadline}</h2><span>{home.endingSignature}</span></section>
+  };
 
   return (
     <AnimatedPage className="home-page">
-      <section className="hero scrapbook-section">
-        <div className="hero-copy" data-page-intro>
-          <span className="eyebrow">OUR LITTLE ARCHIVE · NO. 0520</span>
-          <h1>{settings.manName}<span>与</span>{settings.womanName}</h1>
-          <p className="hero-subtitle">{settings.subtitle}</p>
-          <div className="hero-stats">
-            <div><b>{knownDays}</b><span>相识的日子</span></div>
-            <div><b>{loveDays}</b><span>成为恋人的日子</span></div>
-            <div><b>{duration.years}<em>年</em>{duration.months}<em>月</em>{duration.days}<em>天</em></b><span>认真相爱至今</span></div>
-          </div>
-          <Link className="paper-button" to="/stories">从第一页开始 <ChevronDown size={18} /></Link>
-        </div>
-        <div className="hero-collage" data-page-art>
-          <Polaroid src={content.timeline[7]?.imageUrl || content.timeline[0]?.imageUrl} alt="红与蓝，牵住同一颗心" index={1} />
-          <div className="date-stamp">SINCE<br /><b>{settings.togetherDate.replaceAll("-", ".")}</b></div>
-          <span className="doodle-heart"><Heart /></span>
-        </div>
-        <div className="thread thread-blue" /><div className="thread thread-red" />
-      </section>
-
-      <section className="next-date scrapbook-section" data-reveal>
-        <div className="section-kicker"><CalendarDays size={18} /> NEXT PAGE</div>
-        {next ? <><p>距离「{next.title}」还有</p><strong>{next.remaining}<span>天</span></strong><small>{next.nextDate.replaceAll("-", ".")} · {next.description}</small></> : <p>今天也值得被纪念。</p>}
-      </section>
-
-      <section className="people scrapbook-section" data-stagger>
-        <div className="person-card blue-note"><span className="tape tape-blue" /><small>ABOUT HIM</small><h2>{settings.manName}</h2><i>“会慢慢学会，把在意说得更清楚。”</i></div>
-        <div className="between-note"><span>两个普通的人</span><Heart /><b>写一本不普通的故事</b></div>
-        <div className="person-card red-note"><span className="tape tape-red" /><small>ABOUT HER</small><h2>{settings.womanName}</h2><i>“认真感受，也认真期待被坚定选择。”</i></div>
-      </section>
-
-      <section className="numbers scrapbook-section" aria-labelledby="number-title" data-reveal>
-        <div className="section-heading"><small>THREE SECRET NUMBERS</small><h2 id="number-title">故事留下的暗号</h2><p>有些数字，只有我们知道它为什么特别。</p></div>
-        <div className="number-grid" data-stagger>
-          <NumberSecret number="520" title="故事开始的日子" variant="secret-blue">加上微信的那一天。是巧合，还是故事提前写好的第一行？</NumberSecret>
-          <NumberSecret number="167" title="奶茶小票" variant="secret-ticket">取餐号码落在手里，刚好聊到那些还没开窍的感情。粤语里，它好像还藏着另一句话。</NumberSecret>
-          <NumberSecret number="3·14" title="终于说出口" variant="secret-red">鼓起勇气表白以后才知道，原来这一天也是白色情人节。</NumberSecret>
-        </div>
-      </section>
-
-      <section className="home-index scrapbook-section" data-reveal>
-        <div className="section-heading"><small>CONTENTS</small><h2>每段记忆，都有自己的页面</h2><p>首页只保留最近的线索，完整内容放进各自的章节里。</p></div>
-        <div className="home-index-grid" data-stagger>
-          <Link to="/stories"><BookOpen /><small>STORIES · {content.timeline.length}</small><h3>故事</h3><p>{content.timeline.at(-1)?.title || "从第一章开始读"}</p><span>进入时间线 →</span></Link>
-          <Link to="/gallery"><Images /><small>ALBUMS · {content.albums.length}</small><h3>相册</h3><p>{content.albums.at(-1)?.title || "把平常的日子留下"}</p><span>翻看相册 →</span></Link>
-          <Link to="/letters"><Mail /><small>LETTERS · {content.letters.length}</small><h3>情书</h3><p>{content.letters.at(-1)?.title || "打开写给彼此的话"}</p><span>拆开信封 →</span></Link>
-          <Link to="/wishes"><ListChecks /><small>PENDING · {pendingWishes}</small><h3>愿望</h3><p>把未来拆成可以一起期待的小事。</p><span>查看愿望 →</span></Link>
-        </div>
-      </section>
-
-      <section className="ending scrapbook-section" data-reveal><Sparkles /><p>故事没有写完。</p><h2>下一页，还是我们。</h2><span>MANJYUN × JSHAORII · 2025—FOREVER</span></section>
+      {content.homepage.modules.filter((module) => module.enabled).sort((a, b) => a.sortOrder - b.sortOrder).map((module) => sections[module.moduleKey])}
     </AnimatedPage>
   );
 }
 
-function StoriesPage({ content }: { content: Content }) {
+function StoriesPage({ content, openLightbox }: { content: Content; openLightbox: (src: string) => void }) {
   return (
     <AnimatedPage>
       <PageHeading eyebrow={`CHAPTERS 01—${String(content.timeline.length).padStart(2, "0")}`} title="我们的故事，慢慢写" description={content.settings.heroNote} />
@@ -283,7 +351,7 @@ function StoriesPage({ content }: { content: Content }) {
           {content.timeline.map((event, index) => (
             <article key={event.id} className={`timeline-entry ${index % 2 ? "right" : "left"}`} data-reveal>
               <div className="timeline-number">{String(index + 1).padStart(2, "0")}</div>
-              <Polaroid src={event.imageUrl} alt={event.title} index={index} />
+              <Polaroid src={event.imageUrl} alt={event.title} index={index} width={event.imageWidth} height={event.imageHeight} onOpen={event.imageUrl ? () => openLightbox(event.imageUrl!) : undefined} />
               <div className="timeline-copy"><time>{event.dateLabel}</time><h3>{event.title}</h3><p>{event.body}</p></div>
             </article>
           ))}
@@ -317,9 +385,9 @@ function AlbumPage({ content, openLightbox }: { content: Content; openLightbox: 
       <section className="album-detail scrapbook-section">
         <div className="album-photo-grid" data-stagger>
           {album.media.map((item, index) => {
-            const src = item.thumbUrl || item.url;
+            const src = item.url || item.thumbUrl;
             const alt = item.displayName || item.caption || item.originalName;
-            return <button key={item.id} onClick={() => src && openLightbox(src)}><Polaroid src={src} alt={alt} index={index} />{item.takenDate && <time>{item.takenDate.replaceAll("-", ".")}</time>}</button>;
+            return <article key={item.id}><Polaroid src={src} alt={alt} index={index} width={item.imageWidth} height={item.imageHeight} onOpen={item.url ? () => openLightbox(item.url!) : undefined} />{item.takenDate && <time>{item.takenDate.replaceAll("-", ".")}</time>}</article>;
           })}
         </div>
         {!album.media.length && <div className="empty-public">这本相册还在等待第一张照片。</div>}
@@ -371,7 +439,7 @@ function Journal({ content }: { content: Content }) {
       <SiteNavigation />
       <Routes>
         <Route path="/" element={<HomePage content={content} />} />
-        <Route path="/stories" element={<StoriesPage content={content} />} />
+        <Route path="/stories" element={<StoriesPage content={content} openLightbox={setLightbox} />} />
         <Route path="/gallery" element={<GalleryPage content={content} />} />
         <Route path="/gallery/:albumId" element={<AlbumPage content={content} openLightbox={setLightbox} />} />
         <Route path="/letters" element={<LettersPage content={content} />} />

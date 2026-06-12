@@ -31,6 +31,8 @@ export type TimelineEvent = {
   body: string;
   mediaId: number | null;
   imageUrl?: string | null;
+  imageWidth?: number | null;
+  imageHeight?: number | null;
   published: number;
   sortOrder: number;
 };
@@ -43,9 +45,60 @@ export type Media = {
   displayName: string;
   caption: string;
   takenDate: string | null;
+  imageWidth: number | null;
+  imageHeight: number | null;
   sortOrder: number;
   url?: string;
   thumbUrl?: string | null;
+};
+
+export type HomepageModuleKey = "hero" | "nextDate" | "profiles" | "secrets" | "contents" | "ending";
+
+export type HomepageSettings = {
+  id: number;
+  heroEyebrow: string;
+  heroTitle: string;
+  heroJoiner: string;
+  heroSubtitle: string;
+  heroMediaId: number | null;
+  heroMediaUrl?: string | null;
+  heroMediaWidth?: number | null;
+  heroMediaHeight?: number | null;
+  heroMediaCaption: string;
+  heroCtaLabel: string;
+  heroCtaTarget: string;
+  manQuote: string;
+  womanQuote: string;
+  profilesIntro: string;
+  profilesOutro: string;
+  nextKicker: string;
+  nextPrefix: string;
+  nextFallback: string;
+  secretsEyebrow: string;
+  secretsTitle: string;
+  secretsDescription: string;
+  contentsEyebrow: string;
+  contentsTitle: string;
+  contentsDescription: string;
+  endingKicker: string;
+  endingHeadline: string;
+  endingSignature: string;
+};
+
+export type HomepageModule = {
+  moduleKey: HomepageModuleKey;
+  enabled: number;
+  sortOrder: number;
+};
+
+export type HomepageSecret = {
+  id: number;
+  numberText: string;
+  title: string;
+  body: string;
+  accent: "blue" | "ticket" | "red";
+  enabled: number;
+  sortOrder: number;
 };
 
 export type Album = {
@@ -87,5 +140,10 @@ export type Content = {
   albums: Album[];
   letters: Letter[];
   wishes: Wish[];
+  homepage: {
+    settings: HomepageSettings;
+    modules: HomepageModule[];
+    secrets: HomepageSecret[];
+  };
   media?: Media[];
 };

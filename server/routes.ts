@@ -60,7 +60,7 @@ api.get("/media/:id", requireSite, (req, res) => {
   if (!media) return res.status(404).end();
   res.type(media.mime);
   res.setHeader("Cache-Control", "private, max-age=86400");
-  res.sendFile(media.target);
+  res.sendFile(path.basename(media.target), { root: path.dirname(media.target) });
 });
 
 api.get("/admin/content", requireAdmin, (_req, res) => res.json(getContent(true)));
@@ -93,6 +93,11 @@ const resourceDefinitions = {
     table: "wishes",
     schema: z.object({ title: z.string().min(1).max(120), description: z.string().max(2000).default(""), status: z.enum(["pending", "completed"]), targetDate: nullableDate, completedDate: nullableDate, mediaId: z.coerce.number().int().positive().nullable().optional().transform((value) => value || null), sortOrder: z.coerce.number().int().default(0) }),
     columns: ["title", "description", "status", "target_date", "completed_date", "media_id", "sort_order"]
+  },
+  homeSecrets: {
+    table: "homepage_secret_cards",
+    schema: z.object({ numberText: z.string().min(1).max(24), title: z.string().min(1).max(120), body: z.string().min(1).max(1200), accent: z.enum(["blue", "ticket", "red"]), enabled: bool, sortOrder: z.coerce.number().int().default(0) }),
+    columns: ["number_text", "title", "body", "accent", "enabled", "sort_order"]
   }
 } as const;
 
@@ -160,6 +165,71 @@ api.put("/admin/settings", requireAdmin, (req, res) => {
     WHERE id = 1
   `).run(parsed.data.siteTitle, parsed.data.subtitle, parsed.data.heroNote, parsed.data.metDate, parsed.data.togetherDate, parsed.data.manName, parsed.data.manBirthday, parsed.data.womanName, parsed.data.womanBirthday, parsed.data.musicMediaId);
   res.json(camelizeRow(db.prepare("SELECT * FROM settings WHERE id = 1").get()));
+});
+
+const homepageModuleKeys = ["hero", "nextDate", "profiles", "secrets", "contents", "ending"] as const;
+const homepageSchema = z.object({
+  settings: z.object({
+    heroEyebrow: z.string().max(120),
+    heroTitle: z.string().max(120),
+    heroJoiner: z.string().max(20),
+    heroSubtitle: z.string().max(300),
+    heroMediaId: z.coerce.number().int().positive().nullable().optional().transform((value) => value || null),
+    heroMediaCaption: z.string().max(240),
+    heroCtaLabel: z.string().max(80),
+    heroCtaTarget: z.string().regex(/^\/[A-Za-z0-9/_-]*$/, "按钮目标必须是站内路径"),
+    manQuote: z.string().max(500),
+    womanQuote: z.string().max(500),
+    profilesIntro: z.string().max(160),
+    profilesOutro: z.string().max(160),
+    nextKicker: z.string().max(80),
+    nextPrefix: z.string().max(80),
+    nextFallback: z.string().max(240),
+    secretsEyebrow: z.string().max(120),
+    secretsTitle: z.string().max(160),
+    secretsDescription: z.string().max(300),
+    contentsEyebrow: z.string().max(120),
+    contentsTitle: z.string().max(160),
+    contentsDescription: z.string().max(300),
+    endingKicker: z.string().max(160),
+    endingHeadline: z.string().max(200),
+    endingSignature: z.string().max(200)
+  }),
+  modules: z.array(z.object({ moduleKey: z.enum(homepageModuleKeys), enabled: bool, sortOrder: z.coerce.number().int() })).length(homepageModuleKeys.length)
+});
+
+api.put("/admin/homepage", requireAdmin, (req, res) => {
+  const parsed = homepageSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message || "首页配置格式不正确" });
+  if (new Set(parsed.data.modules.map((item) => item.moduleKey)).size !== homepageModuleKeys.length) return res.status(400).json({ error: "首页模块不能重复" });
+  if (parsed.data.settings.heroMediaId) {
+    const media = db.prepare("SELECT id FROM media WHERE id = ? AND kind = 'image'").get(parsed.data.settings.heroMediaId);
+    if (!media) return res.status(400).json({ error: "首页主图不存在或不是图片" });
+  }
+  const values = parsed.data.settings;
+  try {
+    db.exec("BEGIN");
+    db.prepare(`
+      UPDATE homepage_settings SET
+        hero_eyebrow = ?, hero_title = ?, hero_joiner = ?, hero_subtitle = ?, hero_media_id = ?, hero_media_caption = ?,
+        hero_cta_label = ?, hero_cta_target = ?, man_quote = ?, woman_quote = ?, profiles_intro = ?, profiles_outro = ?,
+        next_kicker = ?, next_prefix = ?, next_fallback = ?, secrets_eyebrow = ?, secrets_title = ?, secrets_description = ?,
+        contents_eyebrow = ?, contents_title = ?, contents_description = ?, ending_kicker = ?, ending_headline = ?, ending_signature = ?,
+        updated_at = CURRENT_TIMESTAMP WHERE id = 1
+    `).run(
+      values.heroEyebrow, values.heroTitle, values.heroJoiner, values.heroSubtitle, values.heroMediaId, values.heroMediaCaption,
+      values.heroCtaLabel, values.heroCtaTarget, values.manQuote, values.womanQuote, values.profilesIntro, values.profilesOutro,
+      values.nextKicker, values.nextPrefix, values.nextFallback, values.secretsEyebrow, values.secretsTitle, values.secretsDescription,
+      values.contentsEyebrow, values.contentsTitle, values.contentsDescription, values.endingKicker, values.endingHeadline, values.endingSignature
+    );
+    const updateModule = db.prepare("UPDATE homepage_modules SET enabled = ?, sort_order = ? WHERE module_key = ?");
+    parsed.data.modules.forEach((item) => updateModule.run(item.enabled, item.sortOrder, item.moduleKey));
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    return res.status(400).json({ error: error instanceof Error ? error.message : "首页配置保存失败" });
+  }
+  res.json({ ok: true });
 });
 
 api.get("/admin/deployment-status", requireAdmin, async (_req, res) => {

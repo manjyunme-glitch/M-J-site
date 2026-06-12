@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Album as AlbumIcon, AlertCircle, CalendarDays, Check, CheckCircle2, Eye, FileText, GitCommit, Heart, Image, LayoutDashboard, LogOut, Music, Pencil, Plus, RefreshCw, Save, Settings, Trash2, Upload, X } from "lucide-react";
+import { Album as AlbumIcon, AlertCircle, ArrowDown, ArrowUp, CalendarDays, Check, CheckCircle2, Eye, FileText, GitCommit, Heart, Image, LayoutDashboard, LayoutTemplate, LogOut, Music, Pencil, Plus, RefreshCw, Save, Settings, Trash2, Upload, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { api, jsonBody } from "./api";
 import type { Content, Media, Settings as SiteSettings } from "./types";
 
-type Tab = "overview" | "anniversaries" | "timeline" | "albums" | "letters" | "wishes" | "settings";
+type Tab = "overview" | "homepage" | "anniversaries" | "timeline" | "albums" | "letters" | "wishes" | "settings";
 type AnyRecord = Record<string, unknown> & { id?: number };
 type DeploymentStatus = {
   repository: string;
@@ -23,6 +23,7 @@ const formatDateTime = (value: string) => value ? new Intl.DateTimeFormat("zh-CN
 
 const nav: Array<{ id: Tab; label: string; icon: typeof LayoutDashboard }> = [
   { id: "overview", label: "总览", icon: LayoutDashboard },
+  { id: "homepage", label: "首页编排", icon: LayoutTemplate },
   { id: "anniversaries", label: "纪念日", icon: CalendarDays },
   { id: "timeline", label: "时间线", icon: FileText },
   { id: "albums", label: "相册", icon: AlbumIcon },
@@ -62,6 +63,11 @@ const definitions = {
     title: "愿望",
     empty: { title: "", description: "", status: "pending", targetDate: null, completedDate: null, mediaId: null, sortOrder: 0 },
     fields: [["title", "愿望标题", "text"], ["description", "说明", "textarea"], ["status", "状态", "status"], ["targetDate", "目标日期", "date"], ["completedDate", "完成日期", "date"], ["mediaId", "配图", "media"], ["sortOrder", "排序", "number"]]
+  },
+  homeSecrets: {
+    title: "首页暗号卡片",
+    empty: { numberText: "", title: "", body: "", accent: "blue", enabled: 1, sortOrder: 0 },
+    fields: [["numberText", "正面数字或符号", "text"], ["title", "翻开后的标题", "text"], ["body", "翻开后的说明", "textarea"], ["accent", "纸张样式", "accent"], ["enabled", "前台显示", "checkbox"], ["sortOrder", "排序", "number"]]
   }
 } as const;
 
@@ -85,9 +91,10 @@ function FormField({ field, value, onChange, media }: { field: readonly [string,
   if (type === "media") {
     const images = media.filter((item) => item.kind === "image");
     const selected = images.find((item) => item.id === Number(value));
-    return <div className="field full-field media-select-field"><span>{label}</span><select value={String(value ?? "")} onChange={(event) => onChange(key, event.target.value ? Number(event.target.value) : null)}><option value="">不使用</option>{images.map((item) => <option key={item.id} value={item.id}>{mediaName(item)}{item.takenDate ? ` · ${item.takenDate}` : ""}</option>)}</select>{selected ? <div className="media-choice-preview"><img src={selected.thumbUrl || selected.url} alt={mediaName(selected)} /><div><strong>{mediaName(selected)}</strong><span>{selected.takenDate || "未填写拍摄日期"}</span><small>{selected.originalName}</small></div></div> : <div className="media-choice-empty">选择照片后会在这里显示预览、名称和日期。</div>}</div>;
+    return <div className="field full-field media-select-field"><span>{label}</span><select aria-label={label} value={String(value ?? "")} onChange={(event) => onChange(key, event.target.value ? Number(event.target.value) : null)}><option value="">不使用</option>{images.map((item) => <option key={item.id} value={item.id}>{mediaName(item)}{item.takenDate ? ` · ${item.takenDate}` : ""}</option>)}</select>{selected ? <div className="media-choice-preview"><img src={selected.thumbUrl || selected.url} alt={mediaName(selected)} /><div><strong>{mediaName(selected)}</strong><span>{selected.takenDate || "未填写拍摄日期"}</span><small>{selected.originalName}</small></div></div> : <div className="media-choice-empty">选择照片后会在这里显示预览、名称和日期。</div>}</div>;
   }
   if (type === "status") return <label className="field"><span>{label}</span><select value={String(value)} onChange={(event) => onChange(key, event.target.value)}><option value="pending">待实现</option><option value="completed">已完成</option></select></label>;
+  if (type === "accent") return <label className="field"><span>{label}</span><select value={String(value)} onChange={(event) => onChange(key, event.target.value)}><option value="blue">蓝色纪念纸</option><option value="ticket">虚线票据纸</option><option value="red">红色纪念纸</option></select></label>;
   return <label className="field"><span>{label}</span><input type={type} value={String(value ?? "")} onChange={(event) => onChange(key, type === "number" ? Number(event.target.value) : event.target.value || (type === "date" ? null : ""))} /></label>;
 }
 
@@ -202,6 +209,45 @@ function SettingsPanel({ content, reload }: { content: Content; reload: () => Pr
   return <section className="admin-panel"><header className="panel-header"><div><small>SITE SETTINGS</small><h2>基本信息与音乐</h2></div><button className="primary-action" onClick={() => void save()} disabled={saving}><Save size={17} /> {saving ? "保存中" : "保存设置"}</button></header><div className="settings-grid"><label className="field full-field"><span>网站标题</span><input value={form.siteTitle} onChange={(event) => update("siteTitle", event.target.value)} /></label><label className="field full-field"><span>副标题</span><input value={form.subtitle} onChange={(event) => update("subtitle", event.target.value)} /></label><label className="field full-field"><span>首页寄语</span><textarea rows={4} value={form.heroNote} onChange={(event) => update("heroNote", event.target.value)} /></label><label className="field"><span>相识日期</span><input type="date" value={form.metDate} onChange={(event) => update("metDate", event.target.value)} /></label><label className="field"><span>恋爱日期</span><input type="date" value={form.togetherDate} onChange={(event) => update("togetherDate", event.target.value)} /></label><label className="field"><span>他的名字</span><input value={form.manName} onChange={(event) => update("manName", event.target.value)} /></label><label className="field"><span>他的生日</span><input type="date" value={form.manBirthday} onChange={(event) => update("manBirthday", event.target.value)} /></label><label className="field"><span>她的名字</span><input value={form.womanName} onChange={(event) => update("womanName", event.target.value)} /></label><label className="field"><span>她的生日</span><input type="date" value={form.womanBirthday} onChange={(event) => update("womanBirthday", event.target.value)} /></label><div className="music-settings"><div><Music /><h3>背景音乐</h3><p>浏览器不会强制自动播放，访客点击播放器后开始。</p></div><UploadBox reload={reload} accept="audio/mpeg,audio/mp4,audio/x-m4a,audio/ogg" /><label className="field full-field"><span>当前音乐</span><select value={form.musicMediaId || ""} onChange={(event) => update("musicMediaId", event.target.value ? Number(event.target.value) : null)}><option value="">不播放音乐</option>{audio.map((item) => <option key={item.id} value={item.id}>{item.originalName}</option>)}</select></label></div></div></section>;
 }
 
+const homepageModuleLabels: Record<Content["homepage"]["modules"][number]["moduleKey"], string> = {
+  hero: "首页封面",
+  nextDate: "下一个纪念日",
+  profiles: "两个人的短句",
+  secrets: "暗号翻页卡片",
+  contents: "内容目录",
+  ending: "页尾寄语"
+};
+
+function HomepagePanel({ content, reload }: { content: Content; reload: () => Promise<void> }) {
+  const [settings, setSettings] = useState({ ...content.homepage.settings });
+  const [modules, setModules] = useState([...content.homepage.modules].sort((a, b) => a.sortOrder - b.sortOrder));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    setSettings({ ...content.homepage.settings });
+    setModules([...content.homepage.modules].sort((a, b) => a.sortOrder - b.sortOrder));
+  }, [content.homepage]);
+  const update = (key: keyof typeof settings, value: string | number | null) => setSettings((current) => ({ ...current, [key]: value }));
+  const move = (index: number, offset: number) => setModules((current) => {
+    const target = index + offset;
+    if (target < 0 || target >= current.length) return current;
+    const reordered = [...current];
+    [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+    return reordered.map((item, itemIndex) => ({ ...item, sortOrder: (itemIndex + 1) * 10 }));
+  });
+  const save = async () => {
+    setSaving(true); setError("");
+    try {
+      const { id: _id, heroMediaUrl: _url, heroMediaWidth: _width, heroMediaHeight: _height, ...cleanSettings } = settings;
+      await api("/api/admin/homepage", { method: "PUT", body: jsonBody({ settings: cleanSettings, modules }) });
+      await reload();
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "首页配置保存失败"); }
+    finally { setSaving(false); }
+  };
+  const images = content.media || [];
+  return <div className="homepage-admin"><section className="admin-panel"><header className="panel-header"><div><small>HOME COMPOSER</small><h2>首页编排</h2><p>调整模块顺序、首页短句、封面照片和按钮，不需要再修改源码。</p></div><button className="primary-action" onClick={() => void save()} disabled={saving}><Save size={17} /> {saving ? "保存中" : "保存首页"}</button></header><div className="homepage-module-list">{modules.map((module, index) => <article key={module.moduleKey}><div><small>{String(index + 1).padStart(2, "0")}</small><strong>{homepageModuleLabels[module.moduleKey]}</strong></div><label className="module-toggle"><input type="checkbox" checked={Boolean(module.enabled)} onChange={(event) => setModules((current) => current.map((item) => item.moduleKey === module.moduleKey ? { ...item, enabled: event.target.checked ? 1 : 0 } : item))} /><span>显示</span></label><div className="module-order-actions"><button onClick={() => move(index, -1)} disabled={index === 0} aria-label={`上移${homepageModuleLabels[module.moduleKey]}`} title="上移"><ArrowUp size={16} /></button><button onClick={() => move(index, 1)} disabled={index === modules.length - 1} aria-label={`下移${homepageModuleLabels[module.moduleKey]}`} title="下移"><ArrowDown size={16} /></button></div></article>)}</div><div className="homepage-settings"><section><header><small>HERO</small><h3>封面与主图</h3></header><div className="settings-grid"><label className="field full-field"><span>英文眉题</span><input value={settings.heroEyebrow} onChange={(event) => update("heroEyebrow", event.target.value)} /></label><label className="field"><span>自定义主标题（留空则使用两个人名字）</span><input value={settings.heroTitle} onChange={(event) => update("heroTitle", event.target.value)} /></label><label className="field"><span>名字之间的连接字</span><input value={settings.heroJoiner} onChange={(event) => update("heroJoiner", event.target.value)} /></label><label className="field full-field"><span>封面短句</span><textarea rows={3} value={settings.heroSubtitle} onChange={(event) => update("heroSubtitle", event.target.value)} /></label><FormField field={["heroMediaId", "首页主图", "media"]} value={settings.heroMediaId} onChange={(key, value) => update(key as keyof typeof settings, value as string | number | null)} media={images} /><label className="field full-field"><span>主图题注</span><input value={settings.heroMediaCaption} onChange={(event) => update("heroMediaCaption", event.target.value)} /></label><label className="field"><span>按钮文字</span><input value={settings.heroCtaLabel} onChange={(event) => update("heroCtaLabel", event.target.value)} /></label><label className="field"><span>按钮目标路径</span><input value={settings.heroCtaTarget} onChange={(event) => update("heroCtaTarget", event.target.value)} /></label></div></section><section><header><small>PROFILE NOTES</small><h3>两个人的短句</h3></header><div className="settings-grid"><label className="field full-field"><span>他的短句</span><textarea rows={3} value={settings.manQuote} onChange={(event) => update("manQuote", event.target.value)} /></label><label className="field full-field"><span>她的短句</span><textarea rows={3} value={settings.womanQuote} onChange={(event) => update("womanQuote", event.target.value)} /></label><label className="field"><span>中间上句</span><input value={settings.profilesIntro} onChange={(event) => update("profilesIntro", event.target.value)} /></label><label className="field"><span>中间下句</span><input value={settings.profilesOutro} onChange={(event) => update("profilesOutro", event.target.value)} /></label></div></section><section><header><small>SECTION COPY</small><h3>纪念日、暗号与目录</h3></header><div className="settings-grid"><label className="field"><span>纪念日眉题</span><input value={settings.nextKicker} onChange={(event) => update("nextKicker", event.target.value)} /></label><label className="field"><span>倒数前缀</span><input value={settings.nextPrefix} onChange={(event) => update("nextPrefix", event.target.value)} /></label><label className="field full-field"><span>没有纪念日时显示</span><input value={settings.nextFallback} onChange={(event) => update("nextFallback", event.target.value)} /></label><label className="field"><span>暗号英文眉题</span><input value={settings.secretsEyebrow} onChange={(event) => update("secretsEyebrow", event.target.value)} /></label><label className="field"><span>暗号区标题</span><input value={settings.secretsTitle} onChange={(event) => update("secretsTitle", event.target.value)} /></label><label className="field full-field"><span>暗号区说明</span><input value={settings.secretsDescription} onChange={(event) => update("secretsDescription", event.target.value)} /></label><label className="field"><span>目录英文眉题</span><input value={settings.contentsEyebrow} onChange={(event) => update("contentsEyebrow", event.target.value)} /></label><label className="field"><span>目录标题</span><input value={settings.contentsTitle} onChange={(event) => update("contentsTitle", event.target.value)} /></label><label className="field full-field"><span>目录说明</span><input value={settings.contentsDescription} onChange={(event) => update("contentsDescription", event.target.value)} /></label></div></section><section><header><small>ENDING</small><h3>页尾寄语</h3></header><div className="settings-grid"><label className="field full-field"><span>上方短句</span><input value={settings.endingKicker} onChange={(event) => update("endingKicker", event.target.value)} /></label><label className="field full-field"><span>主句</span><input value={settings.endingHeadline} onChange={(event) => update("endingHeadline", event.target.value)} /></label><label className="field full-field"><span>署名</span><input value={settings.endingSignature} onChange={(event) => update("endingSignature", event.target.value)} /></label></div></section></div>{error && <p className="form-error">{error}</p>}</section><ResourcePanel resource="homeSecrets" items={content.homepage.secrets as unknown as AnyRecord[]} media={images} reload={reload} /></div>;
+}
+
 function UpdateCheckPanel() {
   const [result, setResult] = useState<DeploymentStatus | null>(null);
   const [checking, setChecking] = useState(false);
@@ -235,5 +281,5 @@ export function Admin() {
   if (authorized === null) return <div className="loading-page"><Heart /><span>正在验证后台会话</span></div>;
   if (!authorized) return <AdminLogin onOpen={() => void enter()} />;
   if (!content || !items) return <div className="loading-page">正在读取内容</div>;
-  return <div className="admin-shell"><aside className="admin-sidebar"><a className="admin-brand" href="/"><span>M</span><i /><span>J</span><small>STORY STUDIO</small></a><nav>{nav.map(({ id, label, icon: Icon }) => <button className={tab === id ? "active" : ""} key={id} onClick={() => setTab(id)}><Icon size={18} />{label}</button>)}</nav><button className="logout-button" onClick={() => void logout()}><LogOut size={18} />退出登录</button></aside><main className="admin-main"><div className="mobile-admin-nav"><select value={tab} onChange={(event) => setTab(event.target.value as Tab)}>{nav.map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}</select></div>{tab === "overview" && <Overview content={content} />}{tab === "albums" && <AlbumManager content={content} reload={reload} />}{tab === "settings" && <SettingsPanel content={content} reload={reload} />}{tab !== "overview" && tab !== "albums" && tab !== "settings" && <ResourcePanel resource={tab} items={items[tab] as unknown as AnyRecord[]} media={content.media || []} reload={reload} />}</main></div>;
+  return <div className="admin-shell"><aside className="admin-sidebar"><a className="admin-brand" href="/"><span>M</span><i /><span>J</span><small>STORY STUDIO</small></a><nav>{nav.map(({ id, label, icon: Icon }) => <button className={tab === id ? "active" : ""} key={id} onClick={() => setTab(id)}><Icon size={18} />{label}</button>)}</nav><button className="logout-button" onClick={() => void logout()}><LogOut size={18} />退出登录</button></aside><main className="admin-main"><div className="mobile-admin-nav"><select value={tab} onChange={(event) => setTab(event.target.value as Tab)}>{nav.map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}</select></div>{tab === "overview" && <Overview content={content} />}{tab === "homepage" && <HomepagePanel content={content} reload={reload} />}{tab === "albums" && <AlbumManager content={content} reload={reload} />}{tab === "settings" && <SettingsPanel content={content} reload={reload} />}{tab !== "overview" && tab !== "homepage" && tab !== "albums" && tab !== "settings" && <ResourcePanel resource={tab} items={items[tab] as unknown as AnyRecord[]} media={content.media || []} reload={reload} />}</main></div>;
 }

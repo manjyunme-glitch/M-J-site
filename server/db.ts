@@ -57,9 +57,58 @@ db.exec(`
     display_name TEXT NOT NULL DEFAULT '',
     caption TEXT NOT NULL DEFAULT '',
     taken_date TEXT,
+    image_width INTEGER,
+    image_height INTEGER,
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (album_id) REFERENCES albums(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS homepage_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    hero_eyebrow TEXT NOT NULL,
+    hero_title TEXT NOT NULL DEFAULT '',
+    hero_joiner TEXT NOT NULL,
+    hero_subtitle TEXT NOT NULL,
+    hero_media_id INTEGER,
+    hero_media_caption TEXT NOT NULL,
+    hero_cta_label TEXT NOT NULL,
+    hero_cta_target TEXT NOT NULL,
+    man_quote TEXT NOT NULL,
+    woman_quote TEXT NOT NULL,
+    profiles_intro TEXT NOT NULL,
+    profiles_outro TEXT NOT NULL,
+    next_kicker TEXT NOT NULL,
+    next_prefix TEXT NOT NULL,
+    next_fallback TEXT NOT NULL,
+    secrets_eyebrow TEXT NOT NULL,
+    secrets_title TEXT NOT NULL,
+    secrets_description TEXT NOT NULL,
+    contents_eyebrow TEXT NOT NULL,
+    contents_title TEXT NOT NULL,
+    contents_description TEXT NOT NULL,
+    ending_kicker TEXT NOT NULL,
+    ending_headline TEXT NOT NULL,
+    ending_signature TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (hero_media_id) REFERENCES media(id) ON DELETE SET NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS homepage_modules (
+    module_key TEXT PRIMARY KEY CHECK (module_key IN ('hero', 'nextDate', 'profiles', 'secrets', 'contents', 'ending')),
+    enabled INTEGER NOT NULL DEFAULT 1,
+    sort_order INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS homepage_secret_cards (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    number_text TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    accent TEXT NOT NULL DEFAULT 'blue' CHECK (accent IN ('blue', 'ticket', 'red')),
+    enabled INTEGER NOT NULL DEFAULT 1,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 
   CREATE TABLE IF NOT EXISTS timeline_events (
@@ -106,6 +155,8 @@ const ensureColumn = (table: string, column: string, definition: string) => {
 
 ensureColumn("albums", "event_date", "TEXT");
 ensureColumn("media", "display_name", "TEXT NOT NULL DEFAULT ''");
+ensureColumn("media", "image_width", "INTEGER");
+ensureColumn("media", "image_height", "INTEGER");
 
 const seedSettings = db.prepare(`
   INSERT OR IGNORE INTO settings (
@@ -125,7 +176,53 @@ seedSettings.run(
   "1999-11-22"
 );
 
+const currentSettings = db.prepare("SELECT subtitle FROM settings WHERE id = 1").get() as { subtitle: string };
+
+db.prepare(`
+  INSERT OR IGNORE INTO homepage_settings (
+    id, hero_eyebrow, hero_title, hero_joiner, hero_subtitle, hero_media_caption,
+    hero_cta_label, hero_cta_target, man_quote, woman_quote, profiles_intro, profiles_outro,
+    next_kicker, next_prefix, next_fallback, secrets_eyebrow, secrets_title, secrets_description,
+    contents_eyebrow, contents_title, contents_description, ending_kicker, ending_headline, ending_signature
+  ) VALUES (1, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`).run(
+  "OUR LITTLE ARCHIVE · NO. 0520",
+  "与",
+  currentSettings.subtitle,
+  "红与蓝，牵住同一颗心",
+  "从第一页开始",
+  "/stories",
+  "会慢慢学会，把在意说得更清楚。",
+  "认真感受，也认真期待被坚定选择。",
+  "两个普通的人",
+  "写一本不普通的故事",
+  "NEXT PAGE",
+  "距离",
+  "今天也值得被纪念。",
+  "THREE SECRET NUMBERS",
+  "故事留下的暗号",
+  "有些数字，只有我们知道它为什么特别。",
+  "CONTENTS",
+  "每段记忆，都有自己的页面",
+  "首页只保留最近的线索，完整内容放进各自的章节里。",
+  "故事没有写完。",
+  "下一页，还是我们。",
+  "MANJYUN × JSHAORII · 2025—FOREVER"
+);
+
 const count = (table: string) => Number((db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count);
+
+if (count("homepage_modules") === 0) {
+  const insert = db.prepare("INSERT INTO homepage_modules (module_key, enabled, sort_order) VALUES (?, 1, ?)");
+  ["hero", "nextDate", "profiles", "secrets", "contents", "ending"].forEach((key, index) => insert.run(key, (index + 1) * 10));
+}
+
+if (count("homepage_secret_cards") === 0) {
+  const insert = db.prepare("INSERT INTO homepage_secret_cards (number_text, title, body, accent, enabled, sort_order) VALUES (?, ?, ?, ?, 1, ?)");
+  insert.run("520", "故事开始的日子", "加上微信的那一天。是巧合，还是故事提前写好的第一行？", "blue", 10);
+  insert.run("167", "奶茶小票", "取餐号码落在手里，刚好聊到那些还没开窍的感情。粤语里，它好像还藏着另一句话。", "ticket", 20);
+  insert.run("3·14", "终于说出口", "鼓起勇气表白以后才知道，原来这一天也是白色情人节。", "red", 30);
+}
 
 if (count("anniversaries") === 0) {
   const insert = db.prepare("INSERT INTO anniversaries (title, event_date, annual, description, enabled, sort_order) VALUES (?, ?, ?, ?, 1, ?)");

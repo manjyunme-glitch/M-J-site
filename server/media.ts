@@ -14,6 +14,13 @@ type UploadMetadata = {
   takenDate?: string | null;
 };
 
+function normalizedDimensions(metadata: { width?: number; height?: number; orientation?: number }) {
+  let width = metadata.width || null;
+  let height = metadata.height || null;
+  if (width && height && metadata.orientation && [5, 6, 7, 8].includes(metadata.orientation)) [width, height] = [height, width];
+  return { width, height };
+}
+
 export async function persistUpload(file: Express.Multer.File, albumId?: number | null, metadata: UploadMetadata = {}) {
   const id = crypto.randomUUID();
   if (imageMimes.has(file.mimetype)) {
@@ -22,15 +29,16 @@ export async function persistUpload(file: Express.Multer.File, albumId?: number 
     const originalName = `${id}-original${originalExt}`;
     const webName = `${id}-web.webp`;
     const thumbName = `${id}-thumb.webp`;
+    const dimensions = normalizedDimensions(await sharp(file.buffer).metadata());
     fs.writeFileSync(path.join(config.uploadDir, originalName), file.buffer);
     await Promise.all([
       sharp(file.buffer).rotate().resize({ width: 1800, height: 1800, fit: "inside", withoutEnlargement: true }).webp({ quality: 84 }).toFile(path.join(config.uploadDir, webName)),
-      sharp(file.buffer).rotate().resize({ width: 560, height: 560, fit: "cover" }).webp({ quality: 78 }).toFile(path.join(config.uploadDir, thumbName))
+      sharp(file.buffer).rotate().resize({ width: 560, height: 560, fit: "contain", background: { r: 245, g: 239, b: 223, alpha: 1 } }).webp({ quality: 78 }).toFile(path.join(config.uploadDir, thumbName))
     ]);
     const result = db.prepare(`
-      INSERT INTO media (album_id, kind, original_name, file_path, web_path, thumb_path, mime_type, display_name, caption, taken_date)
-      VALUES (?, 'image', ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(albumId ?? null, file.originalname, originalName, webName, thumbName, file.mimetype, metadata.displayName || "", metadata.caption || "", metadata.takenDate || null);
+      INSERT INTO media (album_id, kind, original_name, file_path, web_path, thumb_path, mime_type, display_name, caption, taken_date, image_width, image_height)
+      VALUES (?, 'image', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(albumId ?? null, file.originalname, originalName, webName, thumbName, file.mimetype, metadata.displayName || "", metadata.caption || "", metadata.takenDate || null, dimensions.width, dimensions.height);
     return Number(result.lastInsertRowid);
   }
 
@@ -47,6 +55,27 @@ export async function persistUpload(file: Express.Multer.File, albumId?: number 
   }
 
   throw new Error("仅支持 JPEG、PNG、WebP、MP3、M4A 和 OGG 文件");
+}
+
+export async function backfillMediaDimensions() {
+  const rows = db.prepare("SELECT id, file_path, thumb_path FROM media WHERE kind = 'image' AND (image_width IS NULL OR image_height IS NULL)").all() as Array<{ id: number; file_path: string; thumb_path?: string }>;
+  const update = db.prepare("UPDATE media SET image_width = ?, image_height = ? WHERE id = ?");
+  for (const row of rows) {
+    const target = path.resolve(config.uploadDir, row.file_path);
+    if (!target.startsWith(config.uploadDir) || !fs.existsSync(target)) continue;
+    try {
+      const dimensions = normalizedDimensions(await sharp(target).metadata());
+      if (row.thumb_path) {
+        const thumbTarget = path.resolve(config.uploadDir, row.thumb_path);
+        if (thumbTarget.startsWith(config.uploadDir)) {
+          await sharp(target).rotate().resize({ width: 560, height: 560, fit: "contain", background: { r: 245, g: 239, b: 223, alpha: 1 } }).webp({ quality: 78 }).toFile(thumbTarget);
+        }
+      }
+      if (dimensions.width && dimensions.height) update.run(dimensions.width, dimensions.height, row.id);
+    } catch {
+      // Keep serving the image even when an old file has unreadable metadata.
+    }
+  }
 }
 
 export function removeMediaFiles(id: number) {

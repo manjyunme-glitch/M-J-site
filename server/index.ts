@@ -5,6 +5,7 @@ import helmet from "helmet";
 import { config } from "./config.js";
 import { api } from "./routes.js";
 import { seedArtwork } from "./seed-artwork.js";
+import { backfillMediaDimensions } from "./media.js";
 
 const app = express();
 if (config.trustProxy) app.set("trust proxy", 1);
@@ -39,6 +40,7 @@ app.use(express.static(clientDir, { index: false, maxAge: config.nodeEnv === "pr
 app.use((_req, res) => res.sendFile(path.join(clientDir, "index.html")));
 
 await seedArtwork();
+await backfillMediaDimensions();
 
 app.listen(config.port, "0.0.0.0", () => {
   console.log(`M × J love journal is listening on http://0.0.0.0:${config.port}`);
