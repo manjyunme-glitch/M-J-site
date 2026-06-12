@@ -234,18 +234,20 @@ function MusicPlayer({ src }: { src?: string | null }) {
   const toggle = async () => {
     if (!audioRef.current) return;
     if (audioRef.current.paused) {
-      await audioRef.current.play();
-      setPlaying(true);
+      try {
+        await audioRef.current.play();
+      } catch {
+        setPlaying(false);
+      }
     } else {
       audioRef.current.pause();
-      setPlaying(false);
     }
   };
   return (
-    <div className="music-player">
-      <audio ref={audioRef} src={src} onEnded={() => setPlaying(false)} />
-      <button onClick={toggle} aria-label={playing ? "暂停音乐" : "播放音乐"}>{playing ? <Pause /> : <Play />}</button>
-      <div><small>OUR SOUNDTRACK</small><strong>属于我们的背景音乐</strong></div>
+    <div className="music-player" data-playing={playing}>
+      <audio ref={audioRef} src={src} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} />
+      <button type="button" onClick={toggle} aria-label={playing ? "暂停属于我们的背景音乐" : "播放属于我们的背景音乐"} aria-pressed={playing}>{playing ? <Pause /> : <Play />}</button>
+      <div className="music-meta"><small>OUR SOUNDTRACK</small><strong>属于我们的背景音乐</strong><span className="music-state">{playing ? "正在播放" : "轻触播放"}</span></div>
       <span className={playing ? "sound-wave is-playing" : "sound-wave"}><i /><i /><i /><i /></span>
     </div>
   );
