@@ -2,11 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
-import { BookOpen, CalendarDays, ChevronDown, Eye, EyeOff, Heart, Home, Images, ListChecks, LockKeyhole, Mail, Pause, Play, RefreshCw, Shuffle, Sparkles, X } from "lucide-react";
+import { BookOpen, CalendarDays, ChevronDown, ChevronRight, Eye, EyeOff, Heart, Home, Images, ListChecks, LockKeyhole, Mail, Music2, Pause, Play, RefreshCw, Repeat, Repeat1, Shuffle, SkipBack, SkipForward, Sparkles, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { api, jsonBody } from "./api";
-import type { Album, Anniversary, Content, HomepageCoreType, HomepageModule, Letter } from "./types";
+import type { Album, Anniversary, Content, HomepageCoreType, HomepageModule, Letter, MusicTrack, PlaybackMode } from "./types";
 
 gsap.registerPlugin(ScrollTrigger, useGSAP);
 
@@ -227,10 +227,51 @@ function Polaroid({ src, alt, index, width, height, onOpen }: { src?: string | n
   return onOpen ? <button type="button" className="polaroid-button" onClick={onOpen} aria-label={`查看大图：${alt}`}>{figure}</button> : figure;
 }
 
-function MusicPlayer({ src }: { src?: string | null }) {
+const playbackModes: Array<{ id: PlaybackMode; label: string; icon: typeof Repeat }> = [
+  { id: "sequence", label: "顺序播放", icon: Repeat },
+  { id: "repeat-one", label: "单曲循环", icon: Repeat1 },
+  { id: "shuffle", label: "随机播放", icon: Shuffle }
+];
+
+function MusicPlayer({ tracks, defaultMode }: { tracks: MusicTrack[]; defaultMode: PlaybackMode }) {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const pendingPlayRef = useRef(false);
+  const pointerStartRef = useRef<number | null>(null);
+  const [currentIndex, setCurrentIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
-  if (!src) return null;
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem("mj-music-collapsed") === "true");
+  const [mode, setMode] = useState<PlaybackMode>(() => {
+    const saved = window.localStorage.getItem("mj-music-mode") as PlaybackMode | null;
+    return playbackModes.some((item) => item.id === saved) ? saved as PlaybackMode : defaultMode;
+  });
+  const track = tracks[currentIndex] || tracks[0];
+
+  useEffect(() => {
+    if (currentIndex >= tracks.length) setCurrentIndex(0);
+  }, [currentIndex, tracks.length]);
+
+  useEffect(() => {
+    window.localStorage.setItem("mj-music-collapsed", String(collapsed));
+  }, [collapsed]);
+
+  useEffect(() => {
+    window.localStorage.setItem("mj-music-mode", mode);
+  }, [mode]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !track) return;
+    setCurrentTime(0);
+    setDuration(0);
+    audio.load();
+    if (pendingPlayRef.current) {
+      pendingPlayRef.current = false;
+      void audio.play().catch(() => setPlaying(false));
+    }
+  }, [track?.id]);
+
   const toggle = async () => {
     if (!audioRef.current) return;
     if (audioRef.current.paused) {
@@ -243,12 +284,96 @@ function MusicPlayer({ src }: { src?: string | null }) {
       audioRef.current.pause();
     }
   };
+
+  const playIndex = (index: number, autoplay = playing) => {
+    if (!tracks.length) return;
+    const normalizedIndex = (index + tracks.length) % tracks.length;
+    if (normalizedIndex === currentIndex) {
+      if (audioRef.current) {
+        audioRef.current.currentTime = 0;
+        if (autoplay) void audioRef.current.play().catch(() => setPlaying(false));
+      }
+      return;
+    }
+    pendingPlayRef.current = autoplay;
+    setCurrentIndex(normalizedIndex);
+  };
+
+  const nextTrack = (autoplay = playing) => {
+    if (mode === "shuffle" && tracks.length > 1) {
+      let next = currentIndex;
+      while (next === currentIndex) next = Math.floor(Math.random() * tracks.length);
+      playIndex(next, autoplay);
+      return;
+    }
+    playIndex(currentIndex + 1, autoplay);
+  };
+
+  const previousTrack = () => {
+    const audio = audioRef.current;
+    if (audio && audio.currentTime > 3) {
+      audio.currentTime = 0;
+      return;
+    }
+    playIndex(currentIndex - 1, playing);
+  };
+
+  const handleEnded = () => {
+    if (mode === "repeat-one" && audioRef.current) {
+      audioRef.current.currentTime = 0;
+      void audioRef.current.play();
+      return;
+    }
+    nextTrack(true);
+  };
+
+  const cycleMode = () => {
+    const index = playbackModes.findIndex((item) => item.id === mode);
+    setMode(playbackModes[(index + 1) % playbackModes.length].id);
+  };
+
+  const formatTime = (value: number) => Number.isFinite(value) ? `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, "0")}` : "0:00";
+  const activeMode = playbackModes.find((item) => item.id === mode) || playbackModes[0];
+  const ModeIcon = activeMode.icon;
+
+  useEffect(() => {
+    if (!track || !("mediaSession" in navigator)) return;
+    navigator.mediaSession.metadata = new MediaMetadata({ title: track.title, artist: track.artist, album: "M × J · OUR SOUNDTRACK" });
+    try {
+      navigator.mediaSession.setActionHandler("play", () => void audioRef.current?.play());
+      navigator.mediaSession.setActionHandler("pause", () => audioRef.current?.pause());
+      navigator.mediaSession.setActionHandler("previoustrack", previousTrack);
+      navigator.mediaSession.setActionHandler("nexttrack", () => nextTrack(true));
+    } catch {
+      // Some Safari versions expose Media Session without every action.
+    }
+    return () => {
+      try {
+        navigator.mediaSession.setActionHandler("play", null);
+        navigator.mediaSession.setActionHandler("pause", null);
+        navigator.mediaSession.setActionHandler("previoustrack", null);
+        navigator.mediaSession.setActionHandler("nexttrack", null);
+      } catch {
+        // Keep normal in-page controls available when platform handlers differ.
+      }
+    };
+  }, [track?.id, mode, currentIndex, playing]);
+
+  useEffect(() => {
+    if ("mediaSession" in navigator) navigator.mediaSession.playbackState = playing ? "playing" : "paused";
+  }, [playing]);
+
+  if (!track) return null;
   return (
-    <div className="music-player" data-playing={playing}>
-      <audio ref={audioRef} src={src} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} />
-      <button type="button" onClick={toggle} aria-label={playing ? "暂停属于我们的背景音乐" : "播放属于我们的背景音乐"} aria-pressed={playing}>{playing ? <Pause /> : <Play />}</button>
-      <div className="music-meta"><small>OUR SOUNDTRACK</small><strong>属于我们的背景音乐</strong><span className="music-state">{playing ? "正在播放" : "轻触播放"}</span></div>
-      <span className={playing ? "sound-wave is-playing" : "sound-wave"}><i /><i /><i /><i /></span>
+    <div className={collapsed ? "music-drawer is-collapsed" : "music-drawer"} onPointerDown={(event) => { pointerStartRef.current = event.clientX; }} onPointerUp={(event) => { if (pointerStartRef.current === null) return; const delta = event.clientX - pointerStartRef.current; pointerStartRef.current = null; if (!collapsed && delta > 46) setCollapsed(true); if (collapsed && delta < -28) setCollapsed(false); }}>
+      <audio ref={audioRef} src={track.url} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={handleEnded} onLoadedMetadata={(event) => setDuration(event.currentTarget.duration || 0)} onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)} />
+      {collapsed ? <button type="button" className="music-pull-tab" onClick={() => setCollapsed(false)} aria-label="展开音乐播放器"><Music2 size={18} /><span>{playing ? "正在播放" : "音乐"}</span></button> : <section className="music-player" data-playing={playing} aria-label="主页音乐播放器">
+        <button type="button" className="music-collapse" onClick={() => setCollapsed(true)} aria-label="收起音乐播放器" title="向右滑动也可收起"><ChevronRight size={17} /></button>
+        <div className="music-heading"><div className="music-meta"><small>OUR SOUNDTRACK · {String(currentIndex + 1).padStart(2, "0")}/{String(tracks.length).padStart(2, "0")}</small><strong>{track.title}</strong><span>{track.artist}</span></div><span className={playing ? "sound-wave is-playing" : "sound-wave"}><i /><i /><i /><i /></span></div>
+        <div className="music-progress"><input type="range" min="0" max={duration || 0} step="0.1" value={Math.min(currentTime, duration || 0)} onChange={(event) => { if (audioRef.current) audioRef.current.currentTime = Number(event.target.value); }} aria-label="播放进度" /><div><time>{formatTime(currentTime)}</time><time>{formatTime(duration)}</time></div></div>
+        <div className="music-controls"><button type="button" onClick={previousTrack} aria-label="上一首"><SkipBack /></button><button type="button" className="music-play" onClick={toggle} aria-label={playing ? "暂停音乐" : "播放音乐"} aria-pressed={playing}>{playing ? <Pause /> : <Play />}</button><button type="button" onClick={() => nextTrack(playing)} aria-label="下一首"><SkipForward /></button><button type="button" className="music-mode" onClick={cycleMode} aria-label={`当前${activeMode.label}，点击切换`} title={activeMode.label}><ModeIcon /><span>{activeMode.label}</span></button></div>
+        <small className="music-gesture-hint">向右滑动收起</small>
+      </section>}
     </div>
   );
 }
@@ -502,7 +627,7 @@ function Journal({ content }: { content: Content }) {
         <Route path="/wishes" element={<WishesPage content={content} />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-      <MusicPlayer src={content.settings.musicUrl} />
+      <MusicPlayer tracks={content.settings.musicPlaylist} defaultMode={content.settings.musicMode} />
       {lightbox && <div className="lightbox" role="dialog" aria-modal="true" onClick={() => setLightbox(null)}><button aria-label="关闭"><X /></button><img src={lightbox.replace("variant=thumb", "variant=web")} alt="相册大图" onClick={(event) => event.stopPropagation()} /></div>}
     </div>
   );

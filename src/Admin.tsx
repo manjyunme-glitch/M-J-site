@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Album as AlbumIcon, AlertCircle, ArrowDown, ArrowUp, CalendarDays, Check, CheckCircle2, Eye, FileText, Gamepad2, GitCommit, Heart, Image, LayoutDashboard, LayoutTemplate, LogOut, Music, Pencil, Plus, RefreshCw, Save, Settings, Trash2, Upload, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { api, jsonBody } from "./api";
-import type { Content, HomepageBlockType, HomepageInteractiveType, Media, Settings as SiteSettings } from "./types";
+import type { Content, HomepageBlockType, HomepageInteractiveType, ImageFilterPreset, Media, PlaybackMode, Settings as SiteSettings } from "./types";
 
 type Tab = "overview" | "homepage" | "anniversaries" | "timeline" | "albums" | "letters" | "wishes" | "settings";
 type AnyRecord = Record<string, unknown> & { id?: number };
@@ -15,7 +15,24 @@ type DeploymentStatus = {
   checkedAt: string;
   errorMessage?: string;
 };
-type PendingImage = { id: string; file: File; previewUrl: string; displayName: string; takenDate: string; caption: string };
+type PendingImage = { id: string; file: File; previewUrl: string; displayName: string; takenDate: string; caption: string; filterPreset: ImageFilterPreset };
+type MusicLibraryItem = { id: number; originalName: string; title: string; artist: string; enabled: boolean; sortOrder: number };
+
+const filterPresets: Array<{ id: ImageFilterPreset; label: string; note: string }> = [
+  { id: "original", label: "原图", note: "保留真实色彩" },
+  { id: "warm-pencil", label: "暖纸彩铅", note: "琥珀纸色与铅笔轮廓" },
+  { id: "faded-book", label: "旧书褪色", note: "低饱和暖调" },
+  { id: "blue-diary", label: "冷蓝手账", note: "克制的旧蓝色" },
+  { id: "soft-film", label: "柔和胶片", note: "轻柔低对比" }
+];
+
+function originalMediaUrl(item: Media) {
+  return item.url?.replace(/variant=(web|thumb)/, "variant=original") || item.url || item.thumbUrl || "";
+}
+
+function FilterChooser({ src, value, onChange }: { src: string; value: ImageFilterPreset; onChange: (value: ImageFilterPreset) => void }) {
+  return <div className="filter-chooser" role="radiogroup" aria-label="照片滤镜">{filterPresets.map((preset) => <button type="button" key={preset.id} className={value === preset.id ? "filter-option is-selected" : "filter-option"} role="radio" aria-checked={value === preset.id} onClick={() => onChange(preset.id)}><span className={`filter-preview filter-${preset.id}`}><img src={src} alt="" /></span><strong>{preset.label}</strong><small>{preset.note}</small></button>)}</div>;
+}
 
 const mediaName = (item: Media) => item.displayName || item.caption || item.originalName;
 const shortSha = (sha: string) => sha ? sha.slice(0, 7) : "unknown";
@@ -142,16 +159,17 @@ function UploadBox({ albumId, reload, accept = "image/jpeg,image/png,image/webp"
   };
   const chooseImages = (files: FileList | null) => {
     if (!files?.length) return;
-    setPending((current) => [...current, ...Array.from(files).map((file) => ({
+    setPending((current) => [...current, ...Array.from(files).map((file): PendingImage => ({
       id: crypto.randomUUID(),
       file,
       previewUrl: URL.createObjectURL(file),
       displayName: file.name.replace(/\.[^.]+$/, ""),
       takenDate: "",
-      caption: ""
+      caption: "",
+      filterPreset: "warm-pencil"
     }))]);
   };
-  const updatePending = (id: string, key: keyof Pick<PendingImage, "displayName" | "takenDate" | "caption">, value: string) => setPending((current) => current.map((item) => item.id === id ? { ...item, [key]: value } : item));
+  const updatePending = <K extends keyof Pick<PendingImage, "displayName" | "takenDate" | "caption" | "filterPreset">>(id: string, key: K, value: PendingImage[K]) => setPending((current) => current.map((item) => item.id === id ? { ...item, [key]: value } : item));
   const removePending = (id: string) => setPending((current) => current.filter((item) => {
     if (item.id === id) URL.revokeObjectURL(item.previewUrl);
     return item.id !== id;
@@ -165,6 +183,7 @@ function UploadBox({ albumId, reload, accept = "image/jpeg,image/png,image/webp"
       form.append("displayNames", item.displayName);
       form.append("takenDates", item.takenDate);
       form.append("captions", item.caption);
+      form.append("filterPresets", item.filterPreset);
     });
     if (albumId) form.append("albumId", String(albumId));
     try {
@@ -176,11 +195,11 @@ function UploadBox({ albumId, reload, accept = "image/jpeg,image/png,image/webp"
     finally { setUploading(false); }
   };
   const isAudio = accept.startsWith("audio");
-  return <div className="upload-workflow"><label className="upload-box"><Upload /><span>{uploading ? "正在处理文件" : "选择或拖入文件"}</span><small>{isAudio ? "MP3 / M4A / OGG，最大 30MB" : "JPEG / PNG / WebP，单张最大 15MB；选择后可逐张填写名称和日期"}</small><input type="file" accept={accept} multiple={!isAudio} onChange={(event) => { if (isAudio) void uploadAudio(event.target.files); else chooseImages(event.target.files); event.target.value = ""; }} disabled={uploading} /></label>{!isAudio && pending.length > 0 && <div className="upload-queue"><header><div><small>UPLOAD QUEUE</small><h4>上传前整理照片信息</h4></div><span>{pending.length} 张待上传</span></header>{pending.map((item) => <article className="upload-queue-item" key={item.id}><img src={item.previewUrl} alt="待上传预览" /><div className="upload-meta-grid"><label className="field"><span>展示名称</span><input value={item.displayName} onChange={(event) => updatePending(item.id, "displayName", event.target.value)} /></label><label className="field"><span>拍摄日期</span><input type="date" value={item.takenDate} onChange={(event) => updatePending(item.id, "takenDate", event.target.value)} /></label><label className="field full-field"><span>照片说明</span><textarea rows={2} value={item.caption} onChange={(event) => updatePending(item.id, "caption", event.target.value)} /></label><small>{item.file.name}</small></div><button className="icon-action danger" onClick={() => removePending(item.id)} aria-label="移除待上传照片" title="移除"><X size={16} /></button></article>)}<footer><span>信息以后仍可在照片卡片中修改。</span><button className="primary-action" onClick={() => void uploadImages()} disabled={uploading}><Upload size={17} /> {uploading ? "上传中" : `上传 ${pending.length} 张照片`}</button></footer></div>}</div>;
+  return <div className="upload-workflow"><label className="upload-box"><Upload /><span>{uploading ? "正在处理文件" : "选择或拖入文件"}</span><small>{isAudio ? "MP3 / M4A / OGG，可多选，单首最大 30MB" : "JPEG / PNG / WebP，单张最大 15MB；上传前可预览主题滤镜"}</small><input type="file" accept={accept} multiple onChange={(event) => { if (isAudio) void uploadAudio(event.target.files); else chooseImages(event.target.files); event.target.value = ""; }} disabled={uploading} /></label>{!isAudio && pending.length > 0 && <div className="upload-queue"><header><div><small>UPLOAD QUEUE</small><h4>上传前整理照片信息</h4></div><span>{pending.length} 张待上传</span></header>{pending.map((item) => <article className="upload-queue-item" key={item.id}><img className={`filter-${item.filterPreset}`} src={item.previewUrl} alt="待上传预览" /><div className="upload-meta-grid"><label className="field"><span>展示名称</span><input value={item.displayName} onChange={(event) => updatePending(item.id, "displayName", event.target.value)} /></label><label className="field"><span>拍摄日期</span><input type="date" value={item.takenDate} onChange={(event) => updatePending(item.id, "takenDate", event.target.value)} /></label><label className="field full-field"><span>照片说明</span><textarea rows={2} value={item.caption} onChange={(event) => updatePending(item.id, "caption", event.target.value)} /></label><div className="field full-field"><span>主题滤镜</span><FilterChooser src={item.previewUrl} value={item.filterPreset} onChange={(value) => updatePending(item.id, "filterPreset", value)} /></div><small>{item.file.name}</small></div><button className="icon-action danger" onClick={() => removePending(item.id)} aria-label="移除待上传照片" title="移除"><X size={16} /></button></article>)}<footer><span>原始照片会保留，滤镜以后仍可重新选择。</span><button className="primary-action" onClick={() => void uploadImages()} disabled={uploading}><Upload size={17} /> {uploading ? "上传中" : `上传 ${pending.length} 张照片`}</button></footer></div>}</div>;
 }
 
 function MediaEditor({ item, albums, onClose, reload }: { item: Media; albums: Content["albums"]; onClose: () => void; reload: () => Promise<void> }) {
-  const [form, setForm] = useState({ albumId: item.albumId, displayName: item.displayName || "", caption: item.caption || "", takenDate: item.takenDate || "", sortOrder: item.sortOrder });
+  const [form, setForm] = useState({ albumId: item.albumId, displayName: item.displayName || "", caption: item.caption || "", takenDate: item.takenDate || "", filterPreset: item.filterPreset || "original" as ImageFilterPreset, sortOrder: item.sortOrder });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const save = async () => {
@@ -191,7 +210,8 @@ function MediaEditor({ item, albums, onClose, reload }: { item: Media; albums: C
     } catch (caught) { setError(caught instanceof Error ? caught.message : "保存失败"); }
     finally { setSaving(false); }
   };
-  return <div className="editor-backdrop"><div className="editor-dialog media-editor"><header><div><small>PHOTO METADATA</small><h2>编辑照片信息</h2></div><button onClick={onClose} aria-label="关闭"><X /></button></header><div className="media-editor-layout"><div className="media-editor-preview"><img src={item.url || item.thumbUrl || undefined} alt={mediaName(item)} /><small>原始文件</small><span>{item.originalName}</span></div><div className="editor-grid"><label className="field full-field"><span>展示名称</span><input value={form.displayName} onChange={(event) => setForm({ ...form, displayName: event.target.value })} /></label><label className="field"><span>拍摄日期</span><input type="date" value={form.takenDate} onChange={(event) => setForm({ ...form, takenDate: event.target.value })} /></label><label className="field"><span>所属相册</span><select value={form.albumId || ""} onChange={(event) => setForm({ ...form, albumId: event.target.value ? Number(event.target.value) : null })}><option value="">暂不归档</option>{albums.map((album) => <option value={album.id} key={album.id}>{album.title}</option>)}</select></label><label className="field full-field"><span>照片说明</span><textarea rows={5} value={form.caption} onChange={(event) => setForm({ ...form, caption: event.target.value })} /></label><label className="field"><span>排序</span><input type="number" value={form.sortOrder} onChange={(event) => setForm({ ...form, sortOrder: Number(event.target.value) })} /></label></div></div>{error && <p className="form-error">{error}</p>}<footer><button onClick={onClose}>取消</button><button className="primary-action" onClick={() => void save()} disabled={saving}><Save size={17} /> {saving ? "保存中" : "保存照片信息"}</button></footer></div></div>;
+  const source = originalMediaUrl(item);
+  return <div className="editor-backdrop"><div className="editor-dialog media-editor"><header><div><small>PHOTO METADATA</small><h2>编辑照片信息</h2></div><button onClick={onClose} aria-label="关闭"><X /></button></header><div className="media-editor-layout"><div className="media-editor-preview"><img className={`filter-${form.filterPreset}`} src={source} alt={mediaName(item)} /><small>原始文件始终保留</small><span>{item.originalName}</span></div><div className="editor-grid"><label className="field full-field"><span>展示名称</span><input value={form.displayName} onChange={(event) => setForm({ ...form, displayName: event.target.value })} /></label><label className="field"><span>拍摄日期</span><input type="date" value={form.takenDate} onChange={(event) => setForm({ ...form, takenDate: event.target.value })} /></label><label className="field"><span>所属相册</span><select value={form.albumId || ""} onChange={(event) => setForm({ ...form, albumId: event.target.value ? Number(event.target.value) : null })}><option value="">暂不归档</option>{albums.map((album) => <option value={album.id} key={album.id}>{album.title}</option>)}</select></label><label className="field full-field"><span>照片说明</span><textarea rows={5} value={form.caption} onChange={(event) => setForm({ ...form, caption: event.target.value })} /></label><div className="field full-field"><span>主题滤镜</span><FilterChooser src={source} value={form.filterPreset} onChange={(filterPreset) => setForm({ ...form, filterPreset })} /></div><label className="field"><span>排序</span><input type="number" value={form.sortOrder} onChange={(event) => setForm({ ...form, sortOrder: Number(event.target.value) })} /></label></div></div>{error && <p className="form-error">{error}</p>}<footer><button onClick={onClose}>取消</button><button className="primary-action" onClick={() => void save()} disabled={saving}><Save size={17} /> {saving ? "正在重绘" : "保存照片信息"}</button></footer></div></div>;
 }
 
 function AlbumManager({ content, reload }: { content: Content; reload: () => Promise<void> }) {
@@ -202,12 +222,39 @@ function AlbumManager({ content, reload }: { content: Content; reload: () => Pro
 
 function SettingsPanel({ content, reload }: { content: Content; reload: () => Promise<void> }) {
   const [form, setForm] = useState<SiteSettings>({ ...content.settings });
+  const [tracks, setTracks] = useState<MusicLibraryItem[]>([]);
   const [saving, setSaving] = useState(false);
-  useEffect(() => setForm({ ...content.settings }), [content.settings]);
+  useEffect(() => {
+    setForm({ ...content.settings });
+    setTracks((content.media || []).filter((item) => item.kind === "audio").sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id).map((item) => ({ id: item.id, originalName: item.originalName, title: item.displayName || item.originalName.replace(/\.[^.]+$/, ""), artist: item.caption || "M × J", enabled: Boolean(item.playlistEnabled), sortOrder: item.sortOrder })));
+  }, [content.settings, content.media]);
   const update = (key: keyof SiteSettings, value: string | number | null) => setForm((current) => ({ ...current, [key]: value }));
-  const save = async () => { setSaving(true); try { const { id: _id, musicUrl: _musicUrl, ...body } = form; await api("/api/admin/settings", { method: "PUT", body: jsonBody(body) }); await reload(); } finally { setSaving(false); } };
-  const audio = (content.media || []).filter((item) => item.kind === "audio");
-  return <section className="admin-panel"><header className="panel-header"><div><small>SITE SETTINGS</small><h2>基本信息与音乐</h2></div><button className="primary-action" onClick={() => void save()} disabled={saving}><Save size={17} /> {saving ? "保存中" : "保存设置"}</button></header><div className="settings-grid"><label className="field full-field"><span>网站标题</span><input value={form.siteTitle} onChange={(event) => update("siteTitle", event.target.value)} /></label><label className="field full-field"><span>副标题</span><input value={form.subtitle} onChange={(event) => update("subtitle", event.target.value)} /></label><label className="field full-field"><span>首页寄语</span><textarea rows={4} value={form.heroNote} onChange={(event) => update("heroNote", event.target.value)} /></label><label className="field"><span>相识日期</span><input type="date" value={form.metDate} onChange={(event) => update("metDate", event.target.value)} /></label><label className="field"><span>恋爱日期</span><input type="date" value={form.togetherDate} onChange={(event) => update("togetherDate", event.target.value)} /></label><label className="field"><span>他的名字</span><input value={form.manName} onChange={(event) => update("manName", event.target.value)} /></label><label className="field"><span>他的生日</span><input type="date" value={form.manBirthday} onChange={(event) => update("manBirthday", event.target.value)} /></label><label className="field"><span>她的名字</span><input value={form.womanName} onChange={(event) => update("womanName", event.target.value)} /></label><label className="field"><span>她的生日</span><input type="date" value={form.womanBirthday} onChange={(event) => update("womanBirthday", event.target.value)} /></label><div className="music-settings"><div><Music /><h3>背景音乐</h3><p>浏览器不会强制自动播放，访客点击播放器后开始。</p></div><UploadBox reload={reload} accept="audio/mpeg,audio/mp4,audio/x-m4a,audio/ogg" /><label className="field full-field"><span>当前音乐</span><select value={form.musicMediaId || ""} onChange={(event) => update("musicMediaId", event.target.value ? Number(event.target.value) : null)}><option value="">不播放音乐</option>{audio.map((item) => <option key={item.id} value={item.id}>{item.originalName}</option>)}</select></label></div></div></section>;
+  const updateTrack = (id: number, patch: Partial<MusicLibraryItem>) => setTracks((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
+  const moveTrack = (index: number, offset: number) => setTracks((current) => {
+    const next = [...current];
+    const target = index + offset;
+    if (target < 0 || target >= next.length) return current;
+    [next[index], next[target]] = [next[target], next[index]];
+    return next;
+  });
+  const removeTrack = async (item: MusicLibraryItem) => {
+    if (!window.confirm(`删除歌曲“${item.title}”？原始音频文件也会删除。`)) return;
+    await api(`/api/admin/media/${item.id}`, { method: "DELETE" });
+    await reload();
+  };
+  const save = async () => {
+    setSaving(true);
+    try {
+      const normalizedTracks = tracks.map((item, index) => ({ ...item, sortOrder: (index + 1) * 10 }));
+      const firstEnabled = normalizedTracks.find((item) => item.enabled)?.id || null;
+      const { id: _id, musicUrl: _musicUrl, musicPlaylist: _musicPlaylist, ...body } = form;
+      await api("/api/admin/settings", { method: "PUT", body: jsonBody({ ...body, musicMediaId: firstEnabled }) });
+      await api("/api/admin/music", { method: "PUT", body: jsonBody({ tracks: normalizedTracks }) });
+      await reload();
+    } finally { setSaving(false); }
+  };
+  const enabledCount = tracks.filter((item) => item.enabled).length;
+  return <section className="admin-panel"><header className="panel-header"><div><small>SITE SETTINGS</small><h2>基本信息与音乐</h2></div><button className="primary-action" onClick={() => void save()} disabled={saving}><Save size={17} /> {saving ? "保存中" : "保存设置"}</button></header><div className="settings-grid"><label className="field full-field"><span>网站标题</span><input value={form.siteTitle} onChange={(event) => update("siteTitle", event.target.value)} /></label><label className="field full-field"><span>副标题</span><input value={form.subtitle} onChange={(event) => update("subtitle", event.target.value)} /></label><label className="field full-field"><span>首页寄语</span><textarea rows={4} value={form.heroNote} onChange={(event) => update("heroNote", event.target.value)} /></label><label className="field"><span>相识日期</span><input type="date" value={form.metDate} onChange={(event) => update("metDate", event.target.value)} /></label><label className="field"><span>恋爱日期</span><input type="date" value={form.togetherDate} onChange={(event) => update("togetherDate", event.target.value)} /></label><label className="field"><span>他的名字</span><input value={form.manName} onChange={(event) => update("manName", event.target.value)} /></label><label className="field"><span>他的生日</span><input type="date" value={form.manBirthday} onChange={(event) => update("manBirthday", event.target.value)} /></label><label className="field"><span>她的名字</span><input value={form.womanName} onChange={(event) => update("womanName", event.target.value)} /></label><label className="field"><span>她的生日</span><input type="date" value={form.womanBirthday} onChange={(event) => update("womanBirthday", event.target.value)} /></label><div className="music-settings"><div className="music-settings-intro"><Music /><div><h3>主页歌单</h3><p>歌曲先收进音乐库，再选择哪些参与主页播放。访客仍需主动点击开始。</p></div></div><UploadBox reload={reload} accept="audio/mpeg,audio/mp4,audio/x-m4a,audio/ogg" /><label className="field full-field"><span>默认播放模式</span><select value={form.musicMode} onChange={(event) => update("musicMode", event.target.value as PlaybackMode)}><option value="sequence">顺序播放</option><option value="repeat-one">单曲循环</option><option value="shuffle">随机播放</option></select></label><div className="music-library full-field"><header><div><small>MUSIC LIBRARY</small><h4>歌曲收纳</h4></div><span>{tracks.length} 首已上传 · {enabledCount} 首在主页</span></header>{tracks.length ? <div className="music-library-list">{tracks.map((item, index) => <article className={item.enabled ? "music-library-item is-enabled" : "music-library-item"} key={item.id}><label className="music-enable"><input type="checkbox" checked={item.enabled} onChange={(event) => updateTrack(item.id, { enabled: event.target.checked })} /><span>主页播放</span></label><div className="music-track-fields"><label className="field"><span>歌曲名称</span><input value={item.title} onChange={(event) => updateTrack(item.id, { title: event.target.value })} /></label><label className="field"><span>歌手 / 备注</span><input value={item.artist} onChange={(event) => updateTrack(item.id, { artist: event.target.value })} /></label><small>{item.originalName}</small></div><div className="music-track-actions"><button type="button" onClick={() => moveTrack(index, -1)} disabled={index === 0} aria-label={`上移${item.title}`} title="上移"><ArrowUp size={15} /></button><button type="button" onClick={() => moveTrack(index, 1)} disabled={index === tracks.length - 1} aria-label={`下移${item.title}`} title="下移"><ArrowDown size={15} /></button><button type="button" className="danger" onClick={() => void removeTrack(item)} aria-label={`删除${item.title}`} title="删除"><Trash2 size={15} /></button></div></article>)}</div> : <div className="music-library-empty">还没有歌曲。上传后可在这里命名、排序并加入主页歌单。</div>}</div></div></div></section>;
 }
 
 const homepageModuleLabels: Record<HomepageBlockType, string> = {

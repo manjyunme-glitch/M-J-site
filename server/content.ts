@@ -30,13 +30,25 @@ export function getContent(includeDrafts = false) {
   });
   const wishList = wishes.map((wish) => ({ ...wish, imageUrl: mediaUrl(wish.mediaId as number | null) }));
   const heroMedia = media.find((item) => item.id === homepageSettings.heroMediaId);
+  const enabledPlaylist = media.filter((item) => item.kind === "audio" && Number(item.playlistEnabled) === 1);
+  const legacyTrack = media.find((item) => item.kind === "audio" && item.id === settings.musicMediaId);
+  const playlistSource = enabledPlaylist.length ? enabledPlaylist : legacyTrack ? [legacyTrack] : [];
+  const musicPlaylist = playlistSource.map((item) => ({
+    id: Number(item.id),
+    title: String(item.displayName || item.originalName || "属于我们的背景音乐"),
+    artist: String(item.caption || "M × J"),
+    originalName: String(item.originalName || ""),
+    sortOrder: Number(item.sortOrder || 0),
+    url: mediaUrl(Number(item.id)) as string
+  }));
 
   return {
     settings: {
       ...settings,
       manBirthday: includeDrafts ? settings.manBirthday : "",
       womanBirthday: includeDrafts ? settings.womanBirthday : "",
-      musicUrl: mediaUrl(settings.musicMediaId as number | null)
+      musicUrl: musicPlaylist[0]?.url || null,
+      musicPlaylist
     },
     anniversaries,
     timeline: timelineList,

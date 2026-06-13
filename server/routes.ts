@@ -8,7 +8,7 @@ import { config } from "./config.js";
 import { db, camelizeRow } from "./db.js";
 import { clearSessions, createAdminSession, createSiteSession, hasAdminAccess, hasSiteAccess, requireAdmin, requireSite } from "./auth.js";
 import { getContent } from "./content.js";
-import { persistUpload, removeMediaFiles, resolveMediaPath } from "./media.js";
+import { imageFilterPresets, persistUpload, removeMediaFiles, resolveMediaPath, updateImageFilter } from "./media.js";
 import { getDeploymentStatus } from "./version.js";
 
 export const api = Router();
@@ -153,7 +153,8 @@ const settingsSchema = z.object({
   manBirthday: z.string().min(4).max(32),
   womanName: z.string().min(1).max(80),
   womanBirthday: z.string().min(4).max(32),
-  musicMediaId: z.coerce.number().int().positive().nullable().optional().transform((value) => value || null)
+  musicMediaId: z.coerce.number().int().positive().nullable().optional().transform((value) => value || null),
+  musicMode: z.enum(["sequence", "repeat-one", "shuffle"]).default("sequence")
 });
 
 api.put("/admin/settings", requireAdmin, (req, res) => {
@@ -161,10 +162,39 @@ api.put("/admin/settings", requireAdmin, (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message || "设置格式不正确" });
   db.prepare(`
     UPDATE settings SET site_title = ?, subtitle = ?, hero_note = ?, met_date = ?, together_date = ?,
-      man_name = ?, man_birthday = ?, woman_name = ?, woman_birthday = ?, music_media_id = ?, updated_at = CURRENT_TIMESTAMP
+      man_name = ?, man_birthday = ?, woman_name = ?, woman_birthday = ?, music_media_id = ?, music_mode = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = 1
-  `).run(parsed.data.siteTitle, parsed.data.subtitle, parsed.data.heroNote, parsed.data.metDate, parsed.data.togetherDate, parsed.data.manName, parsed.data.manBirthday, parsed.data.womanName, parsed.data.womanBirthday, parsed.data.musicMediaId);
+  `).run(parsed.data.siteTitle, parsed.data.subtitle, parsed.data.heroNote, parsed.data.metDate, parsed.data.togetherDate, parsed.data.manName, parsed.data.manBirthday, parsed.data.womanName, parsed.data.womanBirthday, parsed.data.musicMediaId, parsed.data.musicMode);
   res.json(camelizeRow(db.prepare("SELECT * FROM settings WHERE id = 1").get()));
+});
+
+const musicLibrarySchema = z.object({
+  tracks: z.array(z.object({
+    id: z.coerce.number().int().positive(),
+    enabled: bool,
+    title: z.string().max(160).default(""),
+    artist: z.string().max(160).default(""),
+    sortOrder: z.coerce.number().int().default(0)
+  })).max(200)
+});
+
+api.put("/admin/music", requireAdmin, (req, res) => {
+  const parsed = musicLibrarySchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message || "歌曲信息格式不正确" });
+  const ids = parsed.data.tracks.map((item) => item.id);
+  const existing = ids.length ? db.prepare(`SELECT id FROM media WHERE kind = 'audio' AND id IN (${ids.map(() => "?").join(",")})`).all(...ids) as Array<{ id: number }> : [];
+  if (existing.length !== new Set(ids).size) return res.status(400).json({ error: "歌单中包含不存在的歌曲" });
+  try {
+    db.exec("BEGIN");
+    db.prepare("UPDATE media SET playlist_enabled = 0 WHERE kind = 'audio'").run();
+    const update = db.prepare("UPDATE media SET display_name = ?, caption = ?, playlist_enabled = ?, sort_order = ? WHERE id = ? AND kind = 'audio'");
+    parsed.data.tracks.forEach((item) => update.run(item.title, item.artist, item.enabled, item.sortOrder, item.id));
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    return res.status(400).json({ error: error instanceof Error ? error.message : "歌曲库保存失败" });
+  }
+  res.json({ ok: true });
 });
 
 const homepageCoreTypes = ["hero", "nextDate", "profiles", "secrets", "contents", "ending"] as const;
@@ -290,13 +320,18 @@ api.post("/admin/media", requireAdmin, upload.array("files", 30), async (req, re
     const value = req.body[key];
     return Array.isArray(value) ? value[index] : index === 0 ? value : undefined;
   };
+  const filterAt = (index: number) => {
+    const value = String(fieldAt("filterPresets", index) || "original");
+    return (imageFilterPresets as readonly string[]).includes(value) ? value as typeof imageFilterPresets[number] : "original";
+  };
   try {
     const ids = [];
     for (const [index, file] of files.entries()) {
       ids.push(await persistUpload(file, albumId, {
         displayName: fieldAt("displayNames", index),
         caption: fieldAt("captions", index),
-        takenDate: fieldAt("takenDates", index) || null
+        takenDate: fieldAt("takenDates", index) || null,
+        filterPreset: filterAt(index)
       }));
     }
     const rows = ids.map((id) => camelizeRow(db.prepare("SELECT * FROM media WHERE id = ?").get(id)));
@@ -306,12 +341,19 @@ api.post("/admin/media", requireAdmin, upload.array("files", 30), async (req, re
   }
 });
 
-api.put("/admin/media/:id", requireAdmin, (req, res) => {
+api.put("/admin/media/:id", requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
-  const schema = z.object({ albumId: z.coerce.number().int().positive().nullable().optional().transform((value) => value || null), displayName: z.string().max(160).default(""), caption: z.string().max(1000).default(""), takenDate: nullableDate, sortOrder: z.coerce.number().int().default(0) });
+  const schema = z.object({ albumId: z.coerce.number().int().positive().nullable().optional().transform((value) => value || null), displayName: z.string().max(160).default(""), caption: z.string().max(1000).default(""), takenDate: nullableDate, filterPreset: z.enum(imageFilterPresets).default("original"), sortOrder: z.coerce.number().int().default(0) });
   const parsed = schema.safeParse(req.body);
   if (!Number.isInteger(id) || !parsed.success) return res.status(400).json({ error: "媒体信息格式不正确" });
-  db.prepare("UPDATE media SET album_id = ?, display_name = ?, caption = ?, taken_date = ?, sort_order = ? WHERE id = ?").run(parsed.data.albumId, parsed.data.displayName, parsed.data.caption, parsed.data.takenDate, parsed.data.sortOrder, id);
+  const current = db.prepare("SELECT filter_preset AS filterPreset FROM media WHERE id = ? AND kind = 'image'").get(id) as { filterPreset: string } | undefined;
+  if (!current) return res.status(404).json({ error: "照片不存在" });
+  try {
+    if (current.filterPreset !== parsed.data.filterPreset) await updateImageFilter(id, parsed.data.filterPreset);
+    db.prepare("UPDATE media SET album_id = ?, display_name = ?, caption = ?, taken_date = ?, sort_order = ? WHERE id = ?").run(parsed.data.albumId, parsed.data.displayName, parsed.data.caption, parsed.data.takenDate, parsed.data.sortOrder, id);
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : "滤镜处理失败" });
+  }
   res.json(camelizeRow(db.prepare("SELECT * FROM media WHERE id = ?").get(id)));
 });
 

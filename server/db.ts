@@ -19,6 +19,7 @@ db.exec(`
     woman_name TEXT NOT NULL,
     woman_birthday TEXT NOT NULL,
     music_media_id INTEGER,
+    music_mode TEXT NOT NULL DEFAULT 'sequence',
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (music_media_id) REFERENCES media(id) ON DELETE SET NULL
   );
@@ -59,6 +60,8 @@ db.exec(`
     taken_date TEXT,
     image_width INTEGER,
     image_height INTEGER,
+    filter_preset TEXT NOT NULL DEFAULT 'original',
+    playlist_enabled INTEGER NOT NULL DEFAULT 0,
     sort_order INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (album_id) REFERENCES albums(id) ON DELETE CASCADE
@@ -172,6 +175,9 @@ ensureColumn("albums", "event_date", "TEXT");
 ensureColumn("media", "display_name", "TEXT NOT NULL DEFAULT ''");
 ensureColumn("media", "image_width", "INTEGER");
 ensureColumn("media", "image_height", "INTEGER");
+ensureColumn("media", "filter_preset", "TEXT NOT NULL DEFAULT 'original'");
+ensureColumn("media", "playlist_enabled", "INTEGER NOT NULL DEFAULT 0");
+ensureColumn("settings", "music_mode", "TEXT NOT NULL DEFAULT 'sequence'");
 ensureColumn("homepage_secret_cards", "reveal_style", "TEXT NOT NULL DEFAULT 'flip'");
 
 const seedSettings = db.prepare(`
@@ -191,6 +197,12 @@ seedSettings.run(
   "Jshaorii",
   "1999-11-22"
 );
+
+const legacyMusic = db.prepare("SELECT music_media_id AS musicMediaId FROM settings WHERE id = 1").get() as { musicMediaId: number | null };
+const enabledMusicCount = Number((db.prepare("SELECT COUNT(*) AS count FROM media WHERE kind = 'audio' AND playlist_enabled = 1").get() as { count: number }).count);
+if (legacyMusic.musicMediaId && enabledMusicCount === 0) {
+  db.prepare("UPDATE media SET playlist_enabled = 1 WHERE id = ? AND kind = 'audio'").run(legacyMusic.musicMediaId);
+}
 
 const currentSettings = db.prepare("SELECT subtitle FROM settings WHERE id = 1").get() as { subtitle: string };
 

@@ -1,3 +1,15 @@
+export type PlaybackMode = "sequence" | "repeat-one" | "shuffle";
+export type ImageFilterPreset = "original" | "warm-pencil" | "faded-book" | "blue-diary" | "soft-film";
+
+export type MusicTrack = {
+  id: number;
+  title: string;
+  artist: string;
+  originalName: string;
+  sortOrder: number;
+  url: string;
+};
+
 export type Settings = {
   id: number;
   siteTitle: string;
@@ -10,7 +22,9 @@ export type Settings = {
   womanName: string;
   womanBirthday: string;
   musicMediaId: number | null;
+  musicMode: PlaybackMode;
   musicUrl?: string | null;
+  musicPlaylist: MusicTrack[];
 };
 
 export type Anniversary = {
@@ -47,6 +61,8 @@ export type Media = {
   takenDate: string | null;
   imageWidth: number | null;
   imageHeight: number | null;
+  filterPreset: ImageFilterPreset;
+  playlistEnabled: number;
   sortOrder: number;
   url?: string;
   thumbUrl?: string | null;

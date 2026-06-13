@@ -8,12 +8,59 @@ import { normalizeUploadFilename } from "./filename.js";
 
 const imageMimes = new Set(["image/jpeg", "image/png", "image/webp"]);
 const audioMimes = new Set(["audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/ogg"]);
+export const imageFilterPresets = ["original", "warm-pencil", "faded-book", "blue-diary", "soft-film"] as const;
+export type ImageFilterPreset = typeof imageFilterPresets[number];
 
 type UploadMetadata = {
   displayName?: string;
   caption?: string;
   takenDate?: string | null;
+  filterPreset?: ImageFilterPreset;
 };
+
+const warmMatrix = [
+  [0.9, 0.08, 0.02],
+  [0.05, 0.9, 0.05],
+  [0.03, 0.14, 0.83]
+];
+
+const coolMatrix = [
+  [0.78, 0.12, 0.08],
+  [0.06, 0.86, 0.08],
+  [0.04, 0.18, 0.9]
+];
+
+async function filteredImage(input: Buffer, preset: ImageFilterPreset, resize: Parameters<ReturnType<typeof sharp>["resize"]>[0]) {
+  const resized = await sharp(input).rotate().resize(resize).toBuffer();
+  if (preset === "warm-pencil") {
+    return sharp(resized)
+      .modulate({ brightness: 1.1, saturation: 0.82 })
+      .recomb(warmMatrix)
+      .sharpen(0.9)
+      .linear(0.98, 4);
+  }
+  if (preset === "faded-book") {
+    return sharp(resized).modulate({ brightness: 1.06, saturation: 0.52 }).recomb(warmMatrix).linear(0.9, 16);
+  }
+  if (preset === "blue-diary") {
+    return sharp(resized).modulate({ brightness: 1.02, saturation: 0.68 }).recomb(coolMatrix).linear(0.94, 8);
+  }
+  if (preset === "soft-film") {
+    return sharp(resized).modulate({ brightness: 1.04, saturation: 0.82 }).linear(0.88, 17).sharpen(0.45);
+  }
+  return sharp(resized);
+}
+
+async function writeImageVariants(input: Buffer, webTarget: string, thumbTarget: string, preset: ImageFilterPreset) {
+  const [web, thumb] = await Promise.all([
+    filteredImage(input, preset, { width: 1800, height: 1800, fit: "inside", withoutEnlargement: true }),
+    filteredImage(input, preset, { width: 560, height: 560, fit: "contain", background: { r: 245, g: 239, b: 223, alpha: 1 } })
+  ]);
+  await Promise.all([
+    web.webp({ quality: 84 }).toFile(webTarget),
+    thumb.webp({ quality: 78 }).toFile(thumbTarget)
+  ]);
+}
 
 function normalizedDimensions(metadata: { width?: number; height?: number; orientation?: number }) {
   let width = metadata.width || null;
@@ -31,16 +78,14 @@ export async function persistUpload(file: Express.Multer.File, albumId?: number 
     const storedOriginalName = `${id}-original${originalExt}`;
     const webName = `${id}-web.webp`;
     const thumbName = `${id}-thumb.webp`;
+    const filterPreset = metadata.filterPreset || "original";
     const dimensions = normalizedDimensions(await sharp(file.buffer).metadata());
     fs.writeFileSync(path.join(config.uploadDir, storedOriginalName), file.buffer);
-    await Promise.all([
-      sharp(file.buffer).rotate().resize({ width: 1800, height: 1800, fit: "inside", withoutEnlargement: true }).webp({ quality: 84 }).toFile(path.join(config.uploadDir, webName)),
-      sharp(file.buffer).rotate().resize({ width: 560, height: 560, fit: "contain", background: { r: 245, g: 239, b: 223, alpha: 1 } }).webp({ quality: 78 }).toFile(path.join(config.uploadDir, thumbName))
-    ]);
+    await writeImageVariants(file.buffer, path.join(config.uploadDir, webName), path.join(config.uploadDir, thumbName), filterPreset);
     const result = db.prepare(`
-      INSERT INTO media (album_id, kind, original_name, file_path, web_path, thumb_path, mime_type, display_name, caption, taken_date, image_width, image_height)
-      VALUES (?, 'image', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(albumId ?? null, originalName, storedOriginalName, webName, thumbName, file.mimetype, metadata.displayName || "", metadata.caption || "", metadata.takenDate || null, dimensions.width, dimensions.height);
+      INSERT INTO media (album_id, kind, original_name, file_path, web_path, thumb_path, mime_type, display_name, caption, taken_date, image_width, image_height, filter_preset)
+      VALUES (?, 'image', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(albumId ?? null, originalName, storedOriginalName, webName, thumbName, file.mimetype, metadata.displayName || "", metadata.caption || "", metadata.takenDate || null, dimensions.width, dimensions.height, filterPreset);
     return Number(result.lastInsertRowid);
   }
 
@@ -57,6 +102,17 @@ export async function persistUpload(file: Express.Multer.File, albumId?: number 
   }
 
   throw new Error("仅支持 JPEG、PNG、WebP、MP3、M4A 和 OGG 文件");
+}
+
+export async function updateImageFilter(id: number, preset: ImageFilterPreset) {
+  const row = db.prepare("SELECT file_path, web_path, thumb_path FROM media WHERE id = ? AND kind = 'image'").get(id) as { file_path: string; web_path: string; thumb_path: string } | undefined;
+  if (!row) throw new Error("照片不存在");
+  const source = path.resolve(config.uploadDir, row.file_path);
+  const webTarget = path.resolve(config.uploadDir, row.web_path);
+  const thumbTarget = path.resolve(config.uploadDir, row.thumb_path);
+  if (![source, webTarget, thumbTarget].every((target) => target.startsWith(config.uploadDir)) || !fs.existsSync(source)) throw new Error("照片原始文件不存在");
+  await writeImageVariants(fs.readFileSync(source), webTarget, thumbTarget, preset);
+  db.prepare("UPDATE media SET filter_preset = ? WHERE id = ?").run(preset, id);
 }
 
 export function repairMediaFilenames() {
@@ -79,7 +135,11 @@ export async function backfillMediaDimensions() {
       if (row.thumb_path) {
         const thumbTarget = path.resolve(config.uploadDir, row.thumb_path);
         if (thumbTarget.startsWith(config.uploadDir)) {
-          await sharp(target).rotate().resize({ width: 560, height: 560, fit: "contain", background: { r: 245, g: 239, b: 223, alpha: 1 } }).webp({ quality: 78 }).toFile(thumbTarget);
+          const presetRow = db.prepare("SELECT filter_preset AS filterPreset, web_path AS webPath FROM media WHERE id = ?").get(row.id) as { filterPreset?: ImageFilterPreset; webPath?: string };
+          if (presetRow.webPath) {
+            const webTarget = path.resolve(config.uploadDir, presetRow.webPath);
+            await writeImageVariants(fs.readFileSync(target), webTarget, thumbTarget, presetRow.filterPreset || "original");
+          }
         }
       }
       if (dimensions.width && dimensions.height) update.run(dimensions.width, dimensions.height, row.id);
