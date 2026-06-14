@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
@@ -106,11 +106,18 @@ function AnimatedPage({ children, className = "" }: { children: React.ReactNode;
   const root = useRef<HTMLElement>(null);
   const location = useLocation();
 
-  useEffect(() => { window.scrollTo({ top: 0, behavior: "auto" }); }, [location.pathname]);
+  useEffect(() => {
+    const mobileScroller = root.current?.closest<HTMLElement>(".site-scroll-viewport");
+    if (window.matchMedia("(max-width: 900px)").matches && mobileScroller) mobileScroller.scrollTo({ top: 0, behavior: "auto" });
+    else window.scrollTo({ top: 0, behavior: "auto" });
+  }, [location.pathname]);
 
   useGSAP(() => {
     const media = gsap.matchMedia();
     media.add("(prefers-reduced-motion: no-preference)", () => {
+      const scrollViewport = root.current?.closest<HTMLElement>(".site-scroll-viewport");
+      const scrollContainer = window.matchMedia("(max-width: 900px)").matches ? scrollViewport : null;
+      const scrollTriggerScroller = scrollContainer ? { scroller: scrollContainer } : {};
       const intro = gsap.utils.toArray<HTMLElement>("[data-page-intro] > *");
       const art = gsap.utils.toArray<HTMLElement>("[data-page-art]");
       if (intro.length || art.length) {
@@ -125,7 +132,7 @@ function AnimatedPage({ children, className = "" }: { children: React.ReactNode;
           y: 24,
           duration: 0.62,
           ease: "power2.out",
-          scrollTrigger: { trigger: element, start: "top 88%", once: true }
+          scrollTrigger: { trigger: element, start: "top 88%", once: true, ...scrollTriggerScroller }
         });
       });
 
@@ -138,7 +145,7 @@ function AnimatedPage({ children, className = "" }: { children: React.ReactNode;
           duration: 0.52,
           stagger: 0.07,
           ease: "power2.out",
-          scrollTrigger: { trigger: container, start: "top 88%", once: true }
+          scrollTrigger: { trigger: container, start: "top 88%", once: true, ...scrollTriggerScroller }
         });
       });
     });
@@ -614,19 +621,25 @@ function WishesPage({ content }: { content: Content }) {
 
 function Journal({ content }: { content: Content }) {
   const [lightbox, setLightbox] = useState<string | null>(null);
+  useLayoutEffect(() => {
+    document.documentElement.classList.add("journal-viewport-locked");
+    return () => document.documentElement.classList.remove("journal-viewport-locked");
+  }, []);
   return (
     <div className="site-shell">
       <SiteNavigation />
-      <Routes>
-        <Route path="/" element={<HomePage content={content} />} />
-        <Route path="/stories" element={<StoriesPage content={content} openLightbox={setLightbox} />} />
-        <Route path="/gallery" element={<GalleryPage content={content} />} />
-        <Route path="/gallery/:albumId" element={<AlbumPage content={content} openLightbox={setLightbox} />} />
-        <Route path="/letters" element={<LettersPage content={content} />} />
-        <Route path="/letters/:letterId" element={<LetterPage content={content} />} />
-        <Route path="/wishes" element={<WishesPage content={content} />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      <div className="site-scroll-viewport">
+        <Routes>
+          <Route path="/" element={<HomePage content={content} />} />
+          <Route path="/stories" element={<StoriesPage content={content} openLightbox={setLightbox} />} />
+          <Route path="/gallery" element={<GalleryPage content={content} />} />
+          <Route path="/gallery/:albumId" element={<AlbumPage content={content} openLightbox={setLightbox} />} />
+          <Route path="/letters" element={<LettersPage content={content} />} />
+          <Route path="/letters/:letterId" element={<LetterPage content={content} />} />
+          <Route path="/wishes" element={<WishesPage content={content} />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </div>
       <MusicPlayer tracks={content.settings.musicPlaylist} defaultMode={content.settings.musicMode} />
       {lightbox && <div className="lightbox" role="dialog" aria-modal="true" onClick={() => setLightbox(null)}><button aria-label="关闭"><X /></button><img src={lightbox.replace("variant=thumb", "variant=web")} alt="相册大图" onClick={(event) => event.stopPropagation()} /></div>}
     </div>
