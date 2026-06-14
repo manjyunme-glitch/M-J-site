@@ -430,8 +430,6 @@ function SiteNavigation() {
   }, [location.pathname]);
   return (
     <>
-      <div className={`safari-chrome-guard safari-chrome-guard-top ${hidden ? "is-hidden" : ""}`} aria-hidden="true" />
-      <div className="safari-chrome-guard safari-chrome-guard-bottom" aria-hidden="true" />
       <header className={`site-header ${hidden ? "is-hidden" : ""}`} onFocus={() => setHidden(false)} onPointerDown={() => setHidden(false)}>
         <Link to="/" className="wordmark">M <i /> J</Link>
         <nav aria-label="主要导航">
