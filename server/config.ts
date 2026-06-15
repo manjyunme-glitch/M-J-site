@@ -31,6 +31,7 @@ export const config = {
   timezone: process.env.TZ || "Asia/Shanghai",
   databasePath: path.resolve(process.env.DATABASE_PATH || "./data/love-journal.db"),
   uploadDir: path.resolve(process.env.UPLOAD_DIR || "./uploads"),
+  backupStagingDir: path.resolve(process.env.BACKUP_STAGING_DIR || path.join(path.dirname(process.env.DATABASE_PATH || "./data/love-journal.db"), "backup-staging")),
   cookieSecret: process.env.COOKIE_SECRET || crypto.randomBytes(32).toString("hex"),
   sitePasswordHash: requiredHash("SITE_PASSWORD_HASH"),
   adminPasswordHash: requiredHash("ADMIN_PASSWORD_HASH"),
@@ -43,3 +44,4 @@ export const config = {
 
 fs.mkdirSync(path.dirname(config.databasePath), { recursive: true });
 fs.mkdirSync(config.uploadDir, { recursive: true });
+fs.mkdirSync(config.backupStagingDir, { recursive: true });

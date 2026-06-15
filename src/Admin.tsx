@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Album as AlbumIcon, AlertCircle, ArrowDown, ArrowUp, CalendarDays, Check, CheckCircle2, Eye, FileText, Gamepad2, GitCommit, Heart, Image, LayoutDashboard, LayoutTemplate, LogOut, Music, Pencil, Plus, RefreshCw, Save, Settings, Trash2, Upload, X } from "lucide-react";
+import { Album as AlbumIcon, AlertCircle, ArchiveRestore, ArrowDown, ArrowUp, CalendarDays, Check, CheckCircle2, Download, Eye, FileText, Gamepad2, GitCommit, Heart, Image, LayoutDashboard, LayoutTemplate, LogOut, Music, Pencil, Plus, RefreshCw, Save, Settings, Trash2, Upload, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { api, jsonBody } from "./api";
 import type { Content, HomepageBlockType, HomepageInteractiveType, ImageFilterPreset, Media, PlaybackMode, Settings as SiteSettings } from "./types";
 
-type Tab = "overview" | "homepage" | "anniversaries" | "timeline" | "albums" | "letters" | "wishes" | "settings";
+type Tab = "overview" | "homepage" | "anniversaries" | "timeline" | "albums" | "letters" | "wishes" | "backup" | "settings";
 type AnyRecord = Record<string, unknown> & { id?: number };
 type DeploymentStatus = {
   repository: string;
@@ -17,6 +17,16 @@ type DeploymentStatus = {
 };
 type PendingImage = { id: string; file: File; previewUrl: string; displayName: string; takenDate: string; caption: string; filterPreset: ImageFilterPreset };
 type MusicLibraryItem = { id: number; originalName: string; title: string; artist: string; enabled: boolean; sortOrder: number };
+type BackupInspection = {
+  token: string;
+  filename: string;
+  sizeBytes: number;
+  format: string;
+  version: number;
+  createdAt: string;
+  expiresAt: string;
+  summary: { timeline: number; albums: number; images: number; audio: number; letters: number; wishes: number; anniversaries: number; mediaBytes: number };
+};
 
 const filterPresets: Array<{ id: ImageFilterPreset; label: string; note: string }> = [
   { id: "original", label: "原图", note: "保留真实色彩" },
@@ -46,6 +56,7 @@ const nav: Array<{ id: Tab; label: string; icon: typeof LayoutDashboard }> = [
   { id: "albums", label: "相册", icon: AlbumIcon },
   { id: "letters", label: "情书", icon: Heart },
   { id: "wishes", label: "愿望", icon: Check },
+  { id: "backup", label: "配置备份", icon: ArchiveRestore },
   { id: "settings", label: "设置与音乐", icon: Settings }
 ];
 
@@ -351,6 +362,75 @@ function UpdateCheckPanel() {
   return <section className="update-panel"><header><div><small>DEPLOYMENT STATUS</small><h3>检查 GitHub 更新</h3><p>比较当前 Docker 构建与 GitHub 主分支，只提供状态，不会自动操作 Portainer。</p></div><button className="primary-action" onClick={() => void check()} disabled={checking}><RefreshCw size={17} className={checking ? "is-spinning" : ""} /> {checking ? "检查中" : "检查更新"}</button></header><div className="update-status-line"><span className={`update-pill ${status}`}><StatusIcon size={14} /> {label}</span><span>{result?.errorMessage || (status === "synced" ? "当前部署与远端提交一致。" : status === "outdated" ? "GitHub 已有新提交，请前往 Portainer 手动重新拉取并部署。" : "当前镜像没有可比较的提交信息，重新构建后即可识别。")}</span></div><div className="commit-grid"><article><span>当前版本</span><strong title={result?.current.sha}>{shortSha(result?.current.sha || "")}</strong><p>{result?.current.message || "未记录提交信息"}</p><small>{result?.current.builtAt ? `构建于 ${formatDateTime(result.current.builtAt)}` : `来源：${result?.current.source || "unknown"}`}</small></article><article><span>GitHub 最新提交</span><strong title={result?.latest?.sha}><GitCommit size={17} /> {shortSha(result?.latest?.sha || "")}</strong><p>{result?.latest?.message || "尚未取得远端提交"}</p><small>{result?.latest?.committedAt ? formatDateTime(result.latest.committedAt) : result ? `${result.repository} · ${result.branch}` : "正在读取"}</small></article></div><footer><span>检查时间：{result?.checkedAt ? formatDateTime(result.checkedAt) : "尚未完成"}</span>{result && <a href={`https://github.com/${result.repository}/commits/${result.branch}`} target="_blank" rel="noreferrer">查看提交记录</a>}</footer></section>;
 }
 
+const formatFileSize = (bytes: number) => {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  let index = 0;
+  while (value >= 1024 && index < units.length - 1) { value /= 1024; index += 1; }
+  return `${value >= 10 ? value.toFixed(1) : value.toFixed(2)} ${units[index]}`;
+};
+
+function BackupPanel({ reload }: { reload: () => Promise<void> }) {
+  const [inspection, setInspection] = useState<BackupInspection | null>(null);
+  const [confirmation, setConfirmation] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [inspecting, setInspecting] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+
+  const exportBackup = async () => {
+    setExporting(true); setError(""); setNotice("");
+    try {
+      const response = await fetch("/api/admin/backup/export", { credentials: "same-origin" });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.error || `备份生成失败 (${response.status})`);
+      }
+      const blob = await response.blob();
+      const disposition = response.headers.get("content-disposition") || "";
+      const filename = disposition.match(/filename="([^"]+)"/)?.[1] || `m-j-site-backup-${new Date().toISOString().slice(0, 10)}.mjsite`;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url; link.download = filename; document.body.appendChild(link); link.click(); link.remove();
+      URL.revokeObjectURL(url);
+      setNotice(`完整备份已保存到本地：${filename}`);
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "备份生成失败"); }
+    finally { setExporting(false); }
+  };
+
+  const inspectBackup = async (file?: File) => {
+    if (!file) return;
+    setInspecting(true); setInspection(null); setConfirmation(""); setError(""); setNotice("");
+    const form = new FormData();
+    form.append("backup", file);
+    try { setInspection(await api<BackupInspection>("/api/admin/backup/inspect", { method: "POST", body: form })); }
+    catch (caught) { setError(caught instanceof Error ? caught.message : "备份文件无法读取"); }
+    finally { setInspecting(false); setDragging(false); }
+  };
+
+  const restoreBackup = async () => {
+    if (!inspection || confirmation !== "覆盖当前网站") return;
+    setRestoring(true); setError(""); setNotice("");
+    try {
+      await api("/api/admin/backup/restore", { method: "POST", body: jsonBody({ token: inspection.token, confirmation }) });
+      await reload();
+      setInspection(null); setConfirmation("");
+      setNotice("网站配置已恢复，当前后台内容已经切换到所选备份。");
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "备份恢复失败"); }
+    finally { setRestoring(false); }
+  };
+
+  const summaryItems = inspection ? [
+    ["时间线", inspection.summary.timeline], ["相册", inspection.summary.albums], ["照片", inspection.summary.images],
+    ["歌曲", inspection.summary.audio], ["情书", inspection.summary.letters], ["愿望", inspection.summary.wishes], ["纪念日", inspection.summary.anniversaries]
+  ] : [];
+
+  return <section className="admin-panel backup-panel"><header className="panel-header"><div><small>LOCAL CONFIGURATION</small><h2>配置备份</h2><p>把整本纪念册保存成一个本地文件，需要时再读取并切换回来。</p></div></header><div className="backup-grid"><article className="backup-card export-card"><div className="backup-card-icon"><Download size={25} /></div><small>EXPORT EVERYTHING</small><h3>保存当前网站</h3><p>包含首页编排、全部文案、时间线、相册、照片、音乐、情书、愿望和纪念日。</p><div className="backup-note"><CheckCircle2 size={16} /><span>不会写入管理员密码、站点密码、GitHub Token 或其他 .env 信息。</span></div><button className="primary-action" onClick={() => void exportBackup()} disabled={exporting}><Download size={17} /> {exporting ? "正在打包，请稍候" : "下载完整备份"}</button></article><article className="backup-card restore-card"><div className="backup-card-icon"><ArchiveRestore size={25} /></div><small>RESTORE FROM FILE</small><h3>读取本地备份</h3><p>先检查文件和内容数量，确认无误后才会覆盖当前网站。</p><label className={dragging ? "backup-dropzone is-dragging" : "backup-dropzone"} onDragEnter={(event) => { event.preventDefault(); setDragging(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); void inspectBackup(event.dataTransfer.files[0]); }}><Upload size={22} /><strong>{inspecting ? "正在读取备份" : "选择或拖入 .mjsite 文件"}</strong><span>文件会先上传到服务器临时检查，30 分钟内有效。</span><input type="file" accept=".mjsite,application/gzip" disabled={inspecting || restoring} onChange={(event) => { void inspectBackup(event.target.files?.[0]); event.target.value = ""; }} /></label></article></div>{inspection && <section className="backup-inspection"><header><div><small>BACKUP SUMMARY · V{inspection.version}</small><h3>{inspection.filename}</h3><p>创建于 {formatDateTime(inspection.createdAt)} · 备份文件 {formatFileSize(inspection.sizeBytes)} · 媒体 {formatFileSize(inspection.summary.mediaBytes)}</p></div><span className="backup-ready"><CheckCircle2 size={15} /> 文件可恢复</span></header><div className="backup-summary-grid">{summaryItems.map(([label, value]) => <article key={String(label)}><strong>{value}</strong><span>{label}</span></article>)}</div><div className="backup-danger"><AlertCircle size={21} /><div><strong>恢复会整体替换当前网站</strong><p>当前数据库内容和媒体引用会被此备份替换。请先下载一次当前网站备份，再输入确认文字。</p><label>输入“覆盖当前网站”<input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="off" /></label></div><button className="danger-action" disabled={confirmation !== "覆盖当前网站" || restoring} onClick={() => void restoreBackup()}><ArchiveRestore size={17} /> {restoring ? "正在恢复，请勿关闭页面" : "确认恢复并切换"}</button></div></section>}{notice && <div className="backup-feedback success"><CheckCircle2 size={18} />{notice}</div>}{error && <div className="backup-feedback error"><AlertCircle size={18} />{error}</div>}<footer className="backup-footnote">建议在大改首页文案、重写时间线或批量整理相册前先下载一份备份。多个本地文件可以作为不同版本随时切换。</footer></section>;
+}
+
 function Overview({ content }: { content: Content }) {
   const stats = [{ label: "时间线章节", value: content.timeline.length, icon: FileText }, { label: "相册", value: content.albums.length, icon: Image }, { label: "照片与音乐", value: content.media?.length || 0, icon: Music }, { label: "未完成愿望", value: content.wishes.filter((wish) => wish.status === "pending").length, icon: Heart }];
   return <section className="overview"><header className="panel-header"><div><small>GOOD TO SEE YOU</small><h2>故事还在继续</h2><p>这里的每一次保存，都会成为前台纪念册的新一页。</p></div><a className="primary-action" href="/" target="_blank"><Eye size={17} /> 打开前台</a></header><div className="admin-stats">{stats.map(({ label, value, icon: Icon }) => <article key={label}><Icon /><strong>{value}</strong><span>{label}</span></article>)}</div><UpdateCheckPanel /><div className="preview-card"><header><div><small>LIVE PREVIEW</small><h3>实时预览</h3></div><span>桌面视图</span></header><iframe title="纪念册实时预览" src="/" /></div></section>;
@@ -368,5 +448,5 @@ export function Admin() {
   if (authorized === null) return <div className="loading-page"><Heart /><span>正在验证后台会话</span></div>;
   if (!authorized) return <AdminLogin onOpen={() => void enter()} />;
   if (!content || !items) return <div className="loading-page">正在读取内容</div>;
-  return <div className="admin-shell"><aside className="admin-sidebar"><a className="admin-brand" href="/"><span>M</span><i /><span>J</span><small>STORY STUDIO</small></a><nav>{nav.map(({ id, label, icon: Icon }) => <button className={tab === id ? "active" : ""} key={id} onClick={() => setTab(id)}><Icon size={18} />{label}</button>)}</nav><button className="logout-button" onClick={() => void logout()}><LogOut size={18} />退出登录</button></aside><main className="admin-main"><div className="mobile-admin-nav"><select value={tab} onChange={(event) => setTab(event.target.value as Tab)}>{nav.map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}</select></div>{tab === "overview" && <Overview content={content} />}{tab === "homepage" && <HomepagePanel content={content} reload={reload} />}{tab === "albums" && <AlbumManager content={content} reload={reload} />}{tab === "settings" && <SettingsPanel content={content} reload={reload} />}{tab !== "overview" && tab !== "homepage" && tab !== "albums" && tab !== "settings" && <ResourcePanel resource={tab} items={items[tab] as unknown as AnyRecord[]} media={content.media || []} reload={reload} />}</main></div>;
+  return <div className="admin-shell"><aside className="admin-sidebar"><a className="admin-brand" href="/"><span>M</span><i /><span>J</span><small>STORY STUDIO</small></a><nav>{nav.map(({ id, label, icon: Icon }) => <button className={tab === id ? "active" : ""} key={id} onClick={() => setTab(id)}><Icon size={18} />{label}</button>)}</nav><button className="logout-button" onClick={() => void logout()}><LogOut size={18} />退出登录</button></aside><main className="admin-main"><div className="mobile-admin-nav"><select value={tab} onChange={(event) => setTab(event.target.value as Tab)}>{nav.map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}</select></div>{tab === "overview" && <Overview content={content} />}{tab === "homepage" && <HomepagePanel content={content} reload={reload} />}{tab === "albums" && <AlbumManager content={content} reload={reload} />}{tab === "backup" && <BackupPanel reload={reload} />}{tab === "settings" && <SettingsPanel content={content} reload={reload} />}{tab !== "overview" && tab !== "homepage" && tab !== "albums" && tab !== "backup" && tab !== "settings" && <ResourcePanel resource={tab} items={items[tab] as unknown as AnyRecord[]} media={content.media || []} reload={reload} />}</main></div>;
 }

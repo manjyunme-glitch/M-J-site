@@ -10,6 +10,7 @@ import { clearSessions, createAdminSession, createSiteSession, hasAdminAccess, h
 import { getContent } from "./content.js";
 import { imageFilterPresets, persistUpload, removeMediaFiles, resolveMediaPath, updateImageFilter } from "./media.js";
 import { getDeploymentStatus } from "./version.js";
+import { inspectFullBackup, restoreInspectedBackup, streamFullBackup } from "./backup.js";
 
 export const api = Router();
 
@@ -308,6 +309,36 @@ api.delete("/admin/homepage/modules/:id", requireAdmin, (req, res) => {
 api.get("/admin/deployment-status", requireAdmin, async (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.json(await getDeploymentStatus());
+});
+
+api.get("/admin/backup/export", requireAdmin, async (_req, res) => {
+  try {
+    await streamFullBackup(res);
+  } catch (error) {
+    if (!res.headersSent) res.status(500).json({ error: error instanceof Error ? error.message : "备份生成失败" });
+    else res.destroy(error instanceof Error ? error : undefined);
+  }
+});
+
+const backupUpload = multer({ dest: config.backupStagingDir, limits: { files: 1, fileSize: 20 * 1024 * 1024 * 1024 } });
+
+api.post("/admin/backup/inspect", requireAdmin, backupUpload.single("backup"), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "请选择备份文件" });
+  try {
+    res.json(await inspectFullBackup(req.file.path, req.file.originalname));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "备份文件无法读取" });
+  }
+});
+
+api.post("/admin/backup/restore", requireAdmin, (req, res) => {
+  const parsed = z.object({ token: z.string().uuid(), confirmation: z.literal("覆盖当前网站") }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "请输入“覆盖当前网站”确认恢复" });
+  try {
+    res.json(restoreInspectedBackup(parsed.data.token));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "备份恢复失败" });
+  }
 });
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { files: 30, fileSize: 30 * 1024 * 1024 } });

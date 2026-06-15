@@ -29,6 +29,7 @@
     "react-markdown": "latest",
     "react-router-dom": "latest",
     "sharp": "latest",
+    "tar": "^7.5.16",
     "vite": "latest",
     "zod": "latest"
   },
