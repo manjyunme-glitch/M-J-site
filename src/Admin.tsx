@@ -231,7 +231,7 @@ function GuidePanel({ guide }: { guide: AdminGuide }) {
       <summary>
         <span className="guide-icon"><Info size={16} /></span>
         <span>
-          <small>新手提示</small>
+          <small>提示</small>
           <strong>{guide.title}</strong>
         </span>
       </summary>
