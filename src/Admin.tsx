@@ -227,7 +227,7 @@ const resourceGuides: Record<keyof typeof definitions, AdminGuide> = {
 
 function GuidePanel({ guide }: { guide: AdminGuide }) {
   return (
-    <details className="guide-panel" open>
+    <details className="guide-panel">
       <summary>
         <span className="guide-icon"><Info size={16} /></span>
         <span>
