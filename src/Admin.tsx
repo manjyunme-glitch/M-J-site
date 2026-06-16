@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Album as AlbumIcon, AlertCircle, ArchiveRestore, ArrowDown, ArrowUp, CalendarDays, Check, CheckCircle2, Download, Eye, FileText, Gamepad2, GitCommit, Heart, Image, LayoutDashboard, LayoutTemplate, LogOut, Music, Pencil, Plus, RefreshCw, Save, Settings, Trash2, Upload, X } from "lucide-react";
+import { Album as AlbumIcon, AlertCircle, ArchiveRestore, ArrowDown, ArrowUp, CalendarDays, Check, CheckCircle2, Download, Eye, FileText, Gamepad2, GitCommit, Heart, Image, Info, LayoutDashboard, LayoutTemplate, LogOut, Music, Pencil, Plus, RefreshCw, Save, Settings, Trash2, Upload, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { api, jsonBody } from "./api";
 import type { Content, HomepageBlockType, HomepageInteractiveType, ImageFilterPreset, Media, PlaybackMode, Settings as SiteSettings } from "./types";
@@ -26,6 +26,14 @@ type BackupInspection = {
   createdAt: string;
   expiresAt: string;
   summary: { timeline: number; albums: number; images: number; audio: number; letters: number; wishes: number; anniversaries: number; mediaBytes: number };
+};
+type AdminGuide = {
+  title: string;
+  appears: string;
+  steps: string[];
+  previewHref?: string;
+  previewLabel?: string;
+  note?: string;
 };
 
 const filterPresets: Array<{ id: ImageFilterPreset; label: string; note: string }> = [
@@ -99,6 +107,144 @@ const definitions = {
   }
 } as const;
 
+const overviewGuide: AdminGuide = {
+  title: "不知道从哪里开始时",
+  appears: "右侧实时预览就是前台首页。改完内容并保存后，可以直接刷新预览，或点“打开前台”在新窗口查看真实效果。",
+  steps: [
+    "想改首页第一屏、暗号卡片或小游戏，进入“首页编排”。",
+    "想加照片或改照片说明，进入“相册”，先建相册再上传照片。",
+    "想写故事、情书或愿望，进入对应页面；打开“前台显示”才会给访客看到。"
+  ],
+  previewHref: "/",
+  previewLabel: "打开前台"
+};
+
+const homepageGuide: AdminGuide = {
+  title: "首页内容会怎么出现",
+  appears: "这里控制首页从封面到页尾的模块顺序。左侧列表越靠上，前台首页也越靠前；关闭“显示”后，这个模块会从首页消失。",
+  steps: [
+    "先点左侧模块，调整显示开关和上下顺序。",
+    "固定模块的文字在下方填写；互动模块点中后会在右侧出现可编辑内容。",
+    "保存首页后，打开前台首页检查模块顺序、文字和按钮是否正确。"
+  ],
+  previewHref: "/",
+  previewLabel: "预览首页"
+};
+
+const albumGuide: AdminGuide = {
+  title: "相册和照片会显示在哪里",
+  appears: "新建相册会出现在前台“相册”列表；上传到某本相册的照片，会出现在这本相册详情页。封面照片会影响相册列表的大图。",
+  steps: [
+    "先点“新建”创建相册，填名称、日期、说明，并确认“前台显示”已开启。",
+    "在对应相册卡片里选择照片，上传前可填写展示名称、拍摄日期、说明和滤镜。",
+    "保存照片信息后，点预览相册列表，再进入具体相册检查照片排版。"
+  ],
+  previewHref: "/gallery",
+  previewLabel: "预览相册"
+};
+
+const settingsGuide: AdminGuide = {
+  title: "基础信息和音乐怎么生效",
+  appears: "网站标题、副标题和纪念日期会影响首页文案与倒数；主页歌单会出现在右下角音乐播放器，访客需要手动点击播放。",
+  steps: [
+    "先改文字和日期，再处理音乐，最后统一点“保存设置”。",
+    "上传歌曲后，在歌曲收纳里勾选“主页播放”，可用上下箭头调整播放顺序。",
+    "保存后打开前台，检查首页文字、倒数日期和播放器歌单。"
+  ],
+  previewHref: "/",
+  previewLabel: "预览首页"
+};
+
+const backupGuide: AdminGuide = {
+  title: "什么时候用配置备份",
+  appears: "备份文件保存的是当前网站内容和媒体文件，不包含密码或 GitHub Token。恢复备份会整体替换当前网站内容。",
+  steps: [
+    "大改首页、批量整理相册或恢复旧版本前，先下载一份完整备份。",
+    "读取备份时先看数量摘要，确认时间线、相册、照片等数量符合预期。",
+    "只有确定要覆盖当前网站时，才输入确认文字并恢复。"
+  ],
+  note: "恢复是高风险操作；不确定时先导出当前网站。"
+};
+
+const resourceGuides: Record<keyof typeof definitions, AdminGuide> = {
+  anniversaries: {
+    title: "纪念日会显示在哪里",
+    appears: "启用的纪念日会参与首页“下一个纪念日”的倒数。日期越接近今天，越可能成为首页重点显示的下一件事。",
+    steps: [
+      "填写名称和日期；每年都会过的生日、纪念日勾选“每年重复”。",
+      "确认“前台显示”已开启，不想显示时关闭它即可保留草稿。",
+      "保存后回到首页，查看倒数区域是否换成新的纪念日。"
+    ],
+    previewHref: "/",
+    previewLabel: "预览首页倒数"
+  },
+  timeline: {
+    title: "时间线章节会显示在哪里",
+    appears: "启用的时间线会出现在前台“故事”页面，也会影响首页目录里的故事数量。配图会跟在对应章节旁边。",
+    steps: [
+      "展示日期是给前台看的文字；具体日期可用于排序和记录。",
+      "正文写完整故事，配图从已上传照片里选择。",
+      "保存后打开故事页，检查章节顺序、正文换行和配图。"
+    ],
+    previewHref: "/stories",
+    previewLabel: "预览故事页"
+  },
+  albums: albumGuide,
+  letters: {
+    title: "情书会显示在哪里",
+    appears: "启用的情书会出现在前台“情书”列表；点进去后是一封单独的信。正文支持 Markdown，编辑时右侧会即时预览排版。",
+    steps: [
+      "先填标题，再写正文；空行会形成段落。",
+      "确认“前台显示”已开启，保存后才会进入情书列表。",
+      "保存后打开情书页，检查标题、摘要和正文阅读效果。"
+    ],
+    previewHref: "/letters",
+    previewLabel: "预览情书"
+  },
+  wishes: {
+    title: "愿望会显示在哪里",
+    appears: "愿望会出现在前台“愿望”页面；状态为已完成时，卡片会显示完成日期。",
+    steps: [
+      "写清楚愿望标题和说明，让未来看到时知道要做什么。",
+      "有计划时间就填目标日期；完成后切到“已完成”并填完成日期。",
+      "保存后打开愿望页，检查卡片状态和日期文案。"
+    ],
+    previewHref: "/wishes",
+    previewLabel: "预览愿望"
+  },
+  homeSecrets: {
+    title: "首页暗号卡片会显示在哪里",
+    appears: "这些卡片出现在首页“故事留下的暗号”区域。正面显示数字或符号，访客点击后看到标题和说明。",
+    steps: [
+      "正面数字要短，适合写 520、167、3·14 这样的暗号。",
+      "选择纸张样式和揭晓方式，保存后会影响首页互动效果。",
+      "打开首页，点击暗号卡片确认翻开后的文字。"
+    ],
+    previewHref: "/",
+    previewLabel: "预览首页暗号"
+  }
+};
+
+function GuidePanel({ guide }: { guide: AdminGuide }) {
+  return (
+    <details className="guide-panel" open>
+      <summary>
+        <span className="guide-icon"><Info size={16} /></span>
+        <span>
+          <small>新手提示</small>
+          <strong>{guide.title}</strong>
+        </span>
+      </summary>
+      <div className="guide-body">
+        <div className="guide-appears"><span>会显示在哪里</span><p>{guide.appears}</p></div>
+        <ol>{guide.steps.map((step) => <li key={step}>{step}</li>)}</ol>
+        {guide.note && <p className="guide-note">{guide.note}</p>}
+        {guide.previewHref && <a className="guide-preview-link" href={guide.previewHref} target="_blank" rel="noreferrer"><Eye size={15} /> {guide.previewLabel || "打开前台预览"}</a>}
+      </div>
+    </details>
+  );
+}
+
 function AdminLogin({ onOpen }: { onOpen: () => void }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -150,7 +296,7 @@ function ResourcePanel({ resource, items, media, reload }: { resource: keyof typ
     await api(`/api/admin/${resource}/${id}`, { method: "DELETE" });
     await reload();
   };
-  return <section className="admin-panel"><header className="panel-header"><div><small>CONTENT MANAGER</small><h2>{definition.title}</h2></div><button className="primary-action" onClick={openNew}><Plus size={17} /> 新建</button></header><div className="record-list">{items.map((item) => <article className="record-card" key={item.id}><div><small>{String(item.dateLabel || item.eventDate || (item.status === "completed" ? "已完成" : "草稿与排序"))}</small><h3>{String(item.title)}</h3><p>{String(item.description || item.body || "").slice(0, 110)}</p></div><span className="status-pill">{item.published === 0 || item.enabled === 0 ? "隐藏" : "显示"}</span><div className="record-actions"><button onClick={() => setEditing({ ...item })} aria-label="编辑"><Pencil size={16} /></button><button className="danger" onClick={() => remove(Number(item.id))} aria-label="删除"><Trash2 size={16} /></button></div></article>)}{!items.length && <div className="empty-state">还没有内容，点击“新建”写下第一条。</div>}</div>{editing && <div className="editor-backdrop"><div className="editor-dialog"><header><div><small>{editing.id ? "EDIT" : "NEW"}</small><h2>{editing.id ? `编辑${definition.title}` : `新建${definition.title}`}</h2></div><button onClick={() => setEditing(null)}><X /></button></header><div className="editor-grid">{definition.fields.map((field) => <FormField key={field[0]} field={field} value={editing[field[0]]} onChange={(key, value) => setEditing((current) => current ? { ...current, [key]: value } : current)} media={media} />)}{resource === "letters" && <div className="markdown-preview"><small>实时预览</small><ReactMarkdown>{String(editing.body || "")}</ReactMarkdown></div>}</div>{error && <p className="form-error">{error}</p>}<footer><button onClick={() => setEditing(null)}>取消</button><button className="primary-action" onClick={save} disabled={saving}><Save size={17} /> {saving ? "保存中" : "保存"}</button></footer></div></div>}</section>;
+  return <section className="admin-panel"><header className="panel-header"><div><small>CONTENT MANAGER</small><h2>{definition.title}</h2></div><button className="primary-action" onClick={openNew}><Plus size={17} /> 新建</button></header><GuidePanel guide={resourceGuides[resource]} /><div className="record-list">{items.map((item) => <article className="record-card" key={item.id}><div><small>{String(item.dateLabel || item.eventDate || (item.status === "completed" ? "已完成" : "草稿与排序"))}</small><h3>{String(item.title)}</h3><p>{String(item.description || item.body || "").slice(0, 110)}</p></div><span className="status-pill">{item.published === 0 || item.enabled === 0 ? "隐藏" : "显示"}</span><div className="record-actions"><button onClick={() => setEditing({ ...item })} aria-label="编辑"><Pencil size={16} /></button><button className="danger" onClick={() => remove(Number(item.id))} aria-label="删除"><Trash2 size={16} /></button></div></article>)}{!items.length && <div className="empty-state">还没有内容，点击“新建”写下第一条。</div>}</div>{editing && <div className="editor-backdrop"><div className="editor-dialog"><header><div><small>{editing.id ? "EDIT" : "NEW"}</small><h2>{editing.id ? `编辑${definition.title}` : `新建${definition.title}`}</h2></div><button onClick={() => setEditing(null)}><X /></button></header><div className="editor-grid">{definition.fields.map((field) => <FormField key={field[0]} field={field} value={editing[field[0]]} onChange={(key, value) => setEditing((current) => current ? { ...current, [key]: value } : current)} media={media} />)}{resource === "letters" && <div className="markdown-preview"><small>实时预览</small><ReactMarkdown>{String(editing.body || "")}</ReactMarkdown></div>}</div>{error && <p className="form-error">{error}</p>}<footer><button onClick={() => setEditing(null)}>取消</button><button className="primary-action" onClick={save} disabled={saving}><Save size={17} /> {saving ? "保存中" : "保存"}</button></footer></div></div>}</section>;
 }
 
 function UploadBox({ albumId, reload, accept = "image/jpeg,image/png,image/webp" }: { albumId?: number; reload: () => Promise<void>; accept?: string }) {
@@ -265,7 +411,7 @@ function SettingsPanel({ content, reload }: { content: Content; reload: () => Pr
     } finally { setSaving(false); }
   };
   const enabledCount = tracks.filter((item) => item.enabled).length;
-  return <section className="admin-panel"><header className="panel-header"><div><small>SITE SETTINGS</small><h2>基本信息与音乐</h2></div><button className="primary-action" onClick={() => void save()} disabled={saving}><Save size={17} /> {saving ? "保存中" : "保存设置"}</button></header><div className="settings-grid"><label className="field full-field"><span>网站标题</span><input value={form.siteTitle} onChange={(event) => update("siteTitle", event.target.value)} /></label><label className="field full-field"><span>副标题</span><input value={form.subtitle} onChange={(event) => update("subtitle", event.target.value)} /></label><label className="field full-field"><span>首页寄语</span><textarea rows={4} value={form.heroNote} onChange={(event) => update("heroNote", event.target.value)} /></label><label className="field"><span>相识日期</span><input type="date" value={form.metDate} onChange={(event) => update("metDate", event.target.value)} /></label><label className="field"><span>恋爱日期</span><input type="date" value={form.togetherDate} onChange={(event) => update("togetherDate", event.target.value)} /></label><label className="field"><span>他的名字</span><input value={form.manName} onChange={(event) => update("manName", event.target.value)} /></label><label className="field"><span>他的生日</span><input type="date" value={form.manBirthday} onChange={(event) => update("manBirthday", event.target.value)} /></label><label className="field"><span>她的名字</span><input value={form.womanName} onChange={(event) => update("womanName", event.target.value)} /></label><label className="field"><span>她的生日</span><input type="date" value={form.womanBirthday} onChange={(event) => update("womanBirthday", event.target.value)} /></label><div className="music-settings"><div className="music-settings-intro"><Music /><div><h3>主页歌单</h3><p>歌曲先收进音乐库，再选择哪些参与主页播放。访客仍需主动点击开始。</p></div></div><UploadBox reload={reload} accept="audio/mpeg,audio/mp4,audio/x-m4a,audio/ogg" /><label className="field full-field"><span>默认播放模式</span><select value={form.musicMode} onChange={(event) => update("musicMode", event.target.value as PlaybackMode)}><option value="sequence">顺序播放</option><option value="repeat-one">单曲循环</option><option value="shuffle">随机播放</option></select></label><div className="music-library full-field"><header><div><small>MUSIC LIBRARY</small><h4>歌曲收纳</h4></div><span>{tracks.length} 首已上传 · {enabledCount} 首在主页</span></header>{tracks.length ? <div className="music-library-list">{tracks.map((item, index) => <article className={item.enabled ? "music-library-item is-enabled" : "music-library-item"} key={item.id}><label className="music-enable"><input type="checkbox" checked={item.enabled} onChange={(event) => updateTrack(item.id, { enabled: event.target.checked })} /><span>主页播放</span></label><div className="music-track-fields"><label className="field"><span>歌曲名称</span><input value={item.title} onChange={(event) => updateTrack(item.id, { title: event.target.value })} /></label><label className="field"><span>歌手 / 备注</span><input value={item.artist} onChange={(event) => updateTrack(item.id, { artist: event.target.value })} /></label><small>{item.originalName}</small></div><div className="music-track-actions"><button type="button" onClick={() => moveTrack(index, -1)} disabled={index === 0} aria-label={`上移${item.title}`} title="上移"><ArrowUp size={15} /></button><button type="button" onClick={() => moveTrack(index, 1)} disabled={index === tracks.length - 1} aria-label={`下移${item.title}`} title="下移"><ArrowDown size={15} /></button><button type="button" className="danger" onClick={() => void removeTrack(item)} aria-label={`删除${item.title}`} title="删除"><Trash2 size={15} /></button></div></article>)}</div> : <div className="music-library-empty">还没有歌曲。上传后可在这里命名、排序并加入主页歌单。</div>}</div></div></div></section>;
+  return <section className="admin-panel"><header className="panel-header"><div><small>SITE SETTINGS</small><h2>基本信息与音乐</h2></div><button className="primary-action" onClick={() => void save()} disabled={saving}><Save size={17} /> {saving ? "保存中" : "保存设置"}</button></header><GuidePanel guide={settingsGuide} /><div className="settings-grid"><label className="field full-field"><span>网站标题</span><input value={form.siteTitle} onChange={(event) => update("siteTitle", event.target.value)} /></label><label className="field full-field"><span>副标题</span><input value={form.subtitle} onChange={(event) => update("subtitle", event.target.value)} /></label><label className="field full-field"><span>首页寄语</span><textarea rows={4} value={form.heroNote} onChange={(event) => update("heroNote", event.target.value)} /></label><label className="field"><span>相识日期</span><input type="date" value={form.metDate} onChange={(event) => update("metDate", event.target.value)} /></label><label className="field"><span>恋爱日期</span><input type="date" value={form.togetherDate} onChange={(event) => update("togetherDate", event.target.value)} /></label><label className="field"><span>他的名字</span><input value={form.manName} onChange={(event) => update("manName", event.target.value)} /></label><label className="field"><span>他的生日</span><input type="date" value={form.manBirthday} onChange={(event) => update("manBirthday", event.target.value)} /></label><label className="field"><span>她的名字</span><input value={form.womanName} onChange={(event) => update("womanName", event.target.value)} /></label><label className="field"><span>她的生日</span><input type="date" value={form.womanBirthday} onChange={(event) => update("womanBirthday", event.target.value)} /></label><div className="music-settings"><div className="music-settings-intro"><Music /><div><h3>主页歌单</h3><p>歌曲先收进音乐库，再选择哪些参与主页播放。访客仍需主动点击开始。</p></div></div><UploadBox reload={reload} accept="audio/mpeg,audio/mp4,audio/x-m4a,audio/ogg" /><label className="field full-field"><span>默认播放模式</span><select value={form.musicMode} onChange={(event) => update("musicMode", event.target.value as PlaybackMode)}><option value="sequence">顺序播放</option><option value="repeat-one">单曲循环</option><option value="shuffle">随机播放</option></select></label><div className="music-library full-field"><header><div><small>MUSIC LIBRARY</small><h4>歌曲收纳</h4></div><span>{tracks.length} 首已上传 · {enabledCount} 首在主页</span></header>{tracks.length ? <div className="music-library-list">{tracks.map((item, index) => <article className={item.enabled ? "music-library-item is-enabled" : "music-library-item"} key={item.id}><label className="music-enable"><input type="checkbox" checked={item.enabled} onChange={(event) => updateTrack(item.id, { enabled: event.target.checked })} /><span>主页播放</span></label><div className="music-track-fields"><label className="field"><span>歌曲名称</span><input value={item.title} onChange={(event) => updateTrack(item.id, { title: event.target.value })} /></label><label className="field"><span>歌手 / 备注</span><input value={item.artist} onChange={(event) => updateTrack(item.id, { artist: event.target.value })} /></label><small>{item.originalName}</small></div><div className="music-track-actions"><button type="button" onClick={() => moveTrack(index, -1)} disabled={index === 0} aria-label={`上移${item.title}`} title="上移"><ArrowUp size={15} /></button><button type="button" onClick={() => moveTrack(index, 1)} disabled={index === tracks.length - 1} aria-label={`下移${item.title}`} title="下移"><ArrowDown size={15} /></button><button type="button" className="danger" onClick={() => void removeTrack(item)} aria-label={`删除${item.title}`} title="删除"><Trash2 size={15} /></button></div></article>)}</div> : <div className="music-library-empty">还没有歌曲。上传后可在这里命名、排序并加入主页歌单。</div>}</div></div></div></section>;
 }
 
 const homepageModuleLabels: Record<HomepageBlockType, string> = {
@@ -343,7 +489,7 @@ function HomepagePanel({ content, reload }: { content: Content; reload: () => Pr
   };
   const images = content.media || [];
   const selectedModule = modules.find((module) => module.id === selectedId);
-  return <div className="homepage-admin"><section className="admin-panel"><header className="panel-header"><div><small>HOME COMPOSER</small><h2>首页编排</h2><p>从受控模块库中添加互动内容，调整顺序和文案，不需要修改源码。</p></div><button className="primary-action" onClick={() => void save()} disabled={saving}><Save size={17} /> {saving ? "保存中" : "保存首页"}</button></header><div className="module-library"><div><Gamepad2 size={20} /><strong>添加互动模块</strong><span>小游戏只保存在当前页面会话，不记录访客答案。</span></div><select aria-label="选择互动模块" value={libraryType} onChange={(event) => setLibraryType(event.target.value as HomepageInteractiveType)}>{homepageModuleLibrary.map((item) => <option value={item.type} key={item.type}>{item.title}</option>)}</select><button type="button" className="primary-action" onClick={() => void addModule()}><Plus size={16} /> 添加</button><p>{homepageModuleLibrary.find((item) => item.type === libraryType)?.description}</p></div><div className="homepage-composer-grid"><div className="homepage-module-list">{modules.map((module, index) => <article key={module.id} className={selectedId === module.id ? "is-selected" : ""}><button type="button" className="module-select" onClick={() => setSelectedId(module.id)}><small>{String(index + 1).padStart(2, "0")}</small><strong>{homepageModuleLabels[module.blockType]}</strong><span>{homepageCoreTypes.includes(module.blockType) ? "固定模块" : "互动模块"}</span></button><label className="module-toggle"><input type="checkbox" checked={Boolean(module.enabled)} onChange={(event) => updateModule(module.id, { enabled: event.target.checked ? 1 : 0 })} /><span>显示</span></label><div className="module-order-actions"><button onClick={() => move(index, -1)} disabled={index === 0} aria-label={`上移${homepageModuleLabels[module.blockType]}`} title="上移"><ArrowUp size={16} /></button><button onClick={() => move(index, 1)} disabled={index === modules.length - 1} aria-label={`下移${homepageModuleLabels[module.blockType]}`} title="下移"><ArrowDown size={16} /></button>{!homepageCoreTypes.includes(module.blockType) && <button className="danger" onClick={() => void deleteModule(module)} aria-label={`删除${homepageModuleLabels[module.blockType]}`} title="删除"><Trash2 size={16} /></button>}</div></article>)}</div><aside className="module-editor-pane">{selectedModule && !homepageCoreTypes.includes(selectedModule.blockType) ? <InteractiveModuleEditor module={selectedModule} onChange={(config) => updateModule(selectedModule.id, { config })} /> : <div className="module-editor-empty"><LayoutTemplate size={24} /><strong>{selectedModule ? homepageModuleLabels[selectedModule.blockType] : "选择一个互动模块"}</strong><p>{selectedModule ? "固定模块的文字在下方统一编辑。" : "选择问题抽卡、记忆配对或约会抽签后，可以在这里修改内容。"}</p></div>}</aside></div><HomepageCopyEditor settings={settings} update={update} media={images} />{error && <p className="form-error">{error}</p>}</section><ResourcePanel resource="homeSecrets" items={content.homepage.secrets as unknown as AnyRecord[]} media={images} reload={reload} /></div>;
+  return <div className="homepage-admin"><section className="admin-panel"><header className="panel-header"><div><small>HOME COMPOSER</small><h2>首页编排</h2><p>从受控模块库中添加互动内容，调整顺序和文案，不需要修改源码。</p></div><button className="primary-action" onClick={() => void save()} disabled={saving}><Save size={17} /> {saving ? "保存中" : "保存首页"}</button></header><GuidePanel guide={homepageGuide} /><div className="module-library"><div><Gamepad2 size={20} /><strong>添加互动模块</strong><span>小游戏只保存在当前页面会话，不记录访客答案。</span></div><select aria-label="选择互动模块" value={libraryType} onChange={(event) => setLibraryType(event.target.value as HomepageInteractiveType)}>{homepageModuleLibrary.map((item) => <option value={item.type} key={item.type}>{item.title}</option>)}</select><button type="button" className="primary-action" onClick={() => void addModule()}><Plus size={16} /> 添加</button><p>{homepageModuleLibrary.find((item) => item.type === libraryType)?.description}</p></div><div className="homepage-composer-grid"><div className="homepage-module-list">{modules.map((module, index) => <article key={module.id} className={selectedId === module.id ? "is-selected" : ""}><button type="button" className="module-select" onClick={() => setSelectedId(module.id)}><small>{String(index + 1).padStart(2, "0")}</small><strong>{homepageModuleLabels[module.blockType]}</strong><span>{homepageCoreTypes.includes(module.blockType) ? "固定模块" : "互动模块"}</span></button><label className="module-toggle"><input type="checkbox" checked={Boolean(module.enabled)} onChange={(event) => updateModule(module.id, { enabled: event.target.checked ? 1 : 0 })} /><span>显示</span></label><div className="module-order-actions"><button onClick={() => move(index, -1)} disabled={index === 0} aria-label={`上移${homepageModuleLabels[module.blockType]}`} title="上移"><ArrowUp size={16} /></button><button onClick={() => move(index, 1)} disabled={index === modules.length - 1} aria-label={`下移${homepageModuleLabels[module.blockType]}`} title="下移"><ArrowDown size={16} /></button>{!homepageCoreTypes.includes(module.blockType) && <button className="danger" onClick={() => void deleteModule(module)} aria-label={`删除${homepageModuleLabels[module.blockType]}`} title="删除"><Trash2 size={16} /></button>}</div></article>)}</div><aside className="module-editor-pane">{selectedModule && !homepageCoreTypes.includes(selectedModule.blockType) ? <InteractiveModuleEditor module={selectedModule} onChange={(config) => updateModule(selectedModule.id, { config })} /> : <div className="module-editor-empty"><LayoutTemplate size={24} /><strong>{selectedModule ? homepageModuleLabels[selectedModule.blockType] : "选择一个互动模块"}</strong><p>{selectedModule ? "固定模块的文字在下方统一编辑。" : "选择问题抽卡、记忆配对或约会抽签后，可以在这里修改内容。"}</p></div>}</aside></div><HomepageCopyEditor settings={settings} update={update} media={images} />{error && <p className="form-error">{error}</p>}</section><ResourcePanel resource="homeSecrets" items={content.homepage.secrets as unknown as AnyRecord[]} media={images} reload={reload} /></div>;
 }
 
 function UpdateCheckPanel() {
@@ -428,12 +574,12 @@ function BackupPanel({ reload }: { reload: () => Promise<void> }) {
     ["歌曲", inspection.summary.audio], ["情书", inspection.summary.letters], ["愿望", inspection.summary.wishes], ["纪念日", inspection.summary.anniversaries]
   ] : [];
 
-  return <section className="admin-panel backup-panel"><header className="panel-header"><div><small>LOCAL CONFIGURATION</small><h2>配置备份</h2><p>把整本纪念册保存成一个本地文件，需要时再读取并切换回来。</p></div></header><div className="backup-grid"><article className="backup-card export-card"><div className="backup-card-icon"><Download size={25} /></div><small>EXPORT EVERYTHING</small><h3>保存当前网站</h3><p>包含首页编排、全部文案、时间线、相册、照片、音乐、情书、愿望和纪念日。</p><div className="backup-note"><CheckCircle2 size={16} /><span>不会写入管理员密码、站点密码、GitHub Token 或其他 .env 信息。</span></div><button className="primary-action" onClick={() => void exportBackup()} disabled={exporting}><Download size={17} /> {exporting ? "正在打包，请稍候" : "下载完整备份"}</button></article><article className="backup-card restore-card"><div className="backup-card-icon"><ArchiveRestore size={25} /></div><small>RESTORE FROM FILE</small><h3>读取本地备份</h3><p>先检查文件和内容数量，确认无误后才会覆盖当前网站。</p><label className={dragging ? "backup-dropzone is-dragging" : "backup-dropzone"} onDragEnter={(event) => { event.preventDefault(); setDragging(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); void inspectBackup(event.dataTransfer.files[0]); }}><Upload size={22} /><strong>{inspecting ? "正在读取备份" : "选择或拖入 .mjsite 文件"}</strong><span>文件会先上传到服务器临时检查，30 分钟内有效。</span><input type="file" accept=".mjsite,application/gzip" disabled={inspecting || restoring} onChange={(event) => { void inspectBackup(event.target.files?.[0]); event.target.value = ""; }} /></label></article></div>{inspection && <section className="backup-inspection"><header><div><small>BACKUP SUMMARY · V{inspection.version}</small><h3>{inspection.filename}</h3><p>创建于 {formatDateTime(inspection.createdAt)} · 备份文件 {formatFileSize(inspection.sizeBytes)} · 媒体 {formatFileSize(inspection.summary.mediaBytes)}</p></div><span className="backup-ready"><CheckCircle2 size={15} /> 文件可恢复</span></header><div className="backup-summary-grid">{summaryItems.map(([label, value]) => <article key={String(label)}><strong>{value}</strong><span>{label}</span></article>)}</div><div className="backup-danger"><AlertCircle size={21} /><div><strong>恢复会整体替换当前网站</strong><p>当前数据库内容和媒体引用会被此备份替换。请先下载一次当前网站备份，再输入确认文字。</p><label>输入“覆盖当前网站”<input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="off" /></label></div><button className="danger-action" disabled={confirmation !== "覆盖当前网站" || restoring} onClick={() => void restoreBackup()}><ArchiveRestore size={17} /> {restoring ? "正在恢复，请勿关闭页面" : "确认恢复并切换"}</button></div></section>}{notice && <div className="backup-feedback success"><CheckCircle2 size={18} />{notice}</div>}{error && <div className="backup-feedback error"><AlertCircle size={18} />{error}</div>}<footer className="backup-footnote">建议在大改首页文案、重写时间线或批量整理相册前先下载一份备份。多个本地文件可以作为不同版本随时切换。</footer></section>;
+  return <section className="admin-panel backup-panel"><header className="panel-header"><div><small>LOCAL CONFIGURATION</small><h2>配置备份</h2><p>把整本纪念册保存成一个本地文件，需要时再读取并切换回来。</p></div></header><GuidePanel guide={backupGuide} /><div className="backup-grid"><article className="backup-card export-card"><div className="backup-card-icon"><Download size={25} /></div><small>EXPORT EVERYTHING</small><h3>保存当前网站</h3><p>包含首页编排、全部文案、时间线、相册、照片、音乐、情书、愿望和纪念日。</p><div className="backup-note"><CheckCircle2 size={16} /><span>不会写入管理员密码、站点密码、GitHub Token 或其他 .env 信息。</span></div><button className="primary-action" onClick={() => void exportBackup()} disabled={exporting}><Download size={17} /> {exporting ? "正在打包，请稍候" : "下载完整备份"}</button></article><article className="backup-card restore-card"><div className="backup-card-icon"><ArchiveRestore size={25} /></div><small>RESTORE FROM FILE</small><h3>读取本地备份</h3><p>先检查文件和内容数量，确认无误后才会覆盖当前网站。</p><label className={dragging ? "backup-dropzone is-dragging" : "backup-dropzone"} onDragEnter={(event) => { event.preventDefault(); setDragging(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); void inspectBackup(event.dataTransfer.files[0]); }}><Upload size={22} /><strong>{inspecting ? "正在读取备份" : "选择或拖入 .mjsite 文件"}</strong><span>文件会先上传到服务器临时检查，30 分钟内有效。</span><input type="file" accept=".mjsite,application/gzip" disabled={inspecting || restoring} onChange={(event) => { void inspectBackup(event.target.files?.[0]); event.target.value = ""; }} /></label></article></div>{inspection && <section className="backup-inspection"><header><div><small>BACKUP SUMMARY · V{inspection.version}</small><h3>{inspection.filename}</h3><p>创建于 {formatDateTime(inspection.createdAt)} · 备份文件 {formatFileSize(inspection.sizeBytes)} · 媒体 {formatFileSize(inspection.summary.mediaBytes)}</p></div><span className="backup-ready"><CheckCircle2 size={15} /> 文件可恢复</span></header><div className="backup-summary-grid">{summaryItems.map(([label, value]) => <article key={String(label)}><strong>{value}</strong><span>{label}</span></article>)}</div><div className="backup-danger"><AlertCircle size={21} /><div><strong>恢复会整体替换当前网站</strong><p>当前数据库内容和媒体引用会被此备份替换。请先下载一次当前网站备份，再输入确认文字。</p><label>输入“覆盖当前网站”<input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="off" /></label></div><button className="danger-action" disabled={confirmation !== "覆盖当前网站" || restoring} onClick={() => void restoreBackup()}><ArchiveRestore size={17} /> {restoring ? "正在恢复，请勿关闭页面" : "确认恢复并切换"}</button></div></section>}{notice && <div className="backup-feedback success"><CheckCircle2 size={18} />{notice}</div>}{error && <div className="backup-feedback error"><AlertCircle size={18} />{error}</div>}<footer className="backup-footnote">建议在大改首页文案、重写时间线或批量整理相册前先下载一份备份。多个本地文件可以作为不同版本随时切换。</footer></section>;
 }
 
 function Overview({ content }: { content: Content }) {
   const stats = [{ label: "时间线章节", value: content.timeline.length, icon: FileText }, { label: "相册", value: content.albums.length, icon: Image }, { label: "照片与音乐", value: content.media?.length || 0, icon: Music }, { label: "未完成愿望", value: content.wishes.filter((wish) => wish.status === "pending").length, icon: Heart }];
-  return <section className="overview"><header className="panel-header"><div><small>GOOD TO SEE YOU</small><h2>故事还在继续</h2><p>这里的每一次保存，都会成为前台纪念册的新一页。</p></div><a className="primary-action" href="/" target="_blank"><Eye size={17} /> 打开前台</a></header><div className="admin-stats">{stats.map(({ label, value, icon: Icon }) => <article key={label}><Icon /><strong>{value}</strong><span>{label}</span></article>)}</div><UpdateCheckPanel /><div className="preview-card"><header><div><small>LIVE PREVIEW</small><h3>实时预览</h3></div><span>桌面视图</span></header><iframe title="纪念册实时预览" src="/" /></div></section>;
+  return <section className="overview"><header className="panel-header"><div><small>GOOD TO SEE YOU</small><h2>故事还在继续</h2><p>这里的每一次保存，都会成为前台纪念册的新一页。</p></div><a className="primary-action" href="/" target="_blank"><Eye size={17} /> 打开前台</a></header><GuidePanel guide={overviewGuide} /><div className="admin-stats">{stats.map(({ label, value, icon: Icon }) => <article key={label}><Icon /><strong>{value}</strong><span>{label}</span></article>)}</div><UpdateCheckPanel /><div className="preview-card"><header><div><small>LIVE PREVIEW</small><h3>实时预览</h3></div><span>桌面视图</span></header><iframe title="纪念册实时预览" src="/" /></div></section>;
 }
 
 export function Admin() {

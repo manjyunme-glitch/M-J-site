@@ -1,6 +1,8 @@
 import { DatabaseSync } from "node:sqlite";
+import fs from "node:fs";
 import { config } from "./config.js";
 
+export const databaseWasEmpty = !fs.existsSync(config.databasePath) || fs.statSync(config.databasePath).size === 0;
 export const db = new DatabaseSync(config.databasePath);
 
 db.exec(`

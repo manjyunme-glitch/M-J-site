@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import sharp from "sharp";
 import { config } from "./config.js";
-import { db } from "./db.js";
+import { databaseWasEmpty, db } from "./db.js";
 
 const artwork = [
   { file: "01-afternoon-walk.png", caption: "许多个平淡得刚刚好的下午", album: 1, timelineOrder: 10 },
@@ -13,17 +13,23 @@ const artwork = [
   { file: "06-red-blue-necklace.png", caption: "一蓝一红的爱心项链", album: 2, timelineOrder: 80 }
 ];
 
+export function shouldCreateDefaultArtwork(wasEmptyAtStartup: boolean, mediaCount: number) {
+  return wasEmptyAtStartup && mediaCount === 0;
+}
+
 export async function seedArtwork() {
   const seedDir = path.resolve(process.cwd(), "seed-assets");
   const albums = db.prepare("SELECT id FROM albums ORDER BY sort_order, id").all() as Array<{ id: number }>;
   if (!albums.length) return;
+  const mediaCount = Number((db.prepare("SELECT COUNT(*) AS count FROM media").get() as { count: number }).count);
+  const createMissingArtwork = shouldCreateDefaultArtwork(databaseWasEmpty, mediaCount);
 
   for (const [index, item] of artwork.entries()) {
     const source = path.join(seedDir, item.file);
     if (!fs.existsSync(source)) continue;
     const originalName = `seed:${item.file}`;
     let row = db.prepare("SELECT id FROM media WHERE original_name = ?").get(originalName) as { id: number } | undefined;
-    if (!row) {
+    if (!row && createMissingArtwork) {
       const stem = path.parse(item.file).name;
       const originalFile = `${stem}-original.png`;
       const webFile = `${stem}-web.webp`;
@@ -40,6 +46,7 @@ export async function seedArtwork() {
       `).run(albumId, originalName, originalFile, webFile, thumbFile, item.caption, (index + 1) * 10);
       row = { id: Number(inserted.lastInsertRowid) };
     }
+    if (!row) continue;
     db.prepare("UPDATE timeline_events SET media_id = COALESCE(media_id, ?) WHERE sort_order = ?").run(row.id, item.timelineOrder);
     if (index === 1) db.prepare("UPDATE albums SET cover_media_id = COALESCE(cover_media_id, ?) WHERE id = ?").run(row.id, albums[0]?.id);
     if (index === 5 && albums[1]) db.prepare("UPDATE albums SET cover_media_id = COALESCE(cover_media_id, ?) WHERE id = ?").run(row.id, albums[1].id);
