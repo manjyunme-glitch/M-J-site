@@ -201,6 +201,30 @@ body::before {
 .sound-wave i { display: block; width: 2px; height: 5px; background: var(--red); }
 .sound-wave.is-playing i { animation: wave .8s ease-in-out infinite alternate; }.sound-wave.is-playing i:nth-child(2) { animation-delay: -.3s; }.sound-wave.is-playing i:nth-child(3) { animation-delay: -.5s; }.sound-wave.is-playing i:nth-child(4) { animation-delay: -.2s; }
 @keyframes wave { to { height: 18px; } }
+
+.surprise-backdrop { position: fixed; inset: 0; z-index: 180; display: grid; place-items: center; padding: 24px; overflow: hidden; background: rgba(33, 31, 27, .56); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+.surprise-backdrop::before { content: ""; position: absolute; inset: 0; opacity: .28; background-image: linear-gradient(90deg, rgba(255,255,255,.16) 1px, transparent 1px), linear-gradient(rgba(255,255,255,.12) 1px, transparent 1px); background-size: 42px 42px; transform: rotate(-2deg) scale(1.08); }
+.surprise-fall { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.surprise-float { position: absolute; top: -42px; color: rgba(255,253,247,.9); font: 700 13px Georgia, "Noto Serif SC", serif; letter-spacing: .14em; text-shadow: 0 2px 8px rgba(0,0,0,.18); animation: surprise-fall 5.8s linear infinite; }
+.surprise-float:nth-child(3n) { color: var(--red-soft); font-size: 18px; }.surprise-float:nth-child(3n + 1) { color: var(--blue-soft); }.surprise-float:nth-child(4n) { animation-duration: 6.7s; }
+.surprise-card { position: relative; width: min(640px, 100%); min-height: 430px; padding: clamp(38px, 7vw, 68px) clamp(28px, 6vw, 62px) 34px; border: 1px solid rgba(47,45,40,.18); background: var(--white); box-shadow: 14px 16px 0 rgba(34,31,26,.22), 0 24px 80px rgba(0,0,0,.28); transform: rotate(-.45deg); isolation: isolate; }
+.surprise-card::before, .surprise-card::after { content: ""; position: absolute; pointer-events: none; }
+.surprise-card::before { inset: 16px; border: 1px dashed rgba(47,45,40,.2); }
+.surprise-card::after { right: 34px; bottom: 30px; width: 118px; height: 118px; border: 2px solid currentColor; border-radius: 50%; opacity: .08; color: var(--red); transform: rotate(-12deg); }
+.surprise-card > .tape { top: -11px; left: calc(50% - 41px); }
+.surprise-card small { color: var(--blue); font: 700 11px Georgia, "Noto Serif SC", serif; letter-spacing: .18em; text-transform: uppercase; }
+.surprise-card h2 { max-width: 500px; margin: 18px 0 20px; font: 700 clamp(40px, 7vw, 62px)/1.05 Georgia, "Noto Serif SC", serif; letter-spacing: -.045em; }
+.surprise-card p { max-width: 520px; margin: 0; color: #5b554b; font: 18px/2 "Noto Serif SC", serif; }
+.surprise-card footer { margin-top: 26px; color: var(--red); font: italic 26px Georgia, "Noto Serif SC", serif; }
+.surprise-close { position: absolute; top: 12px; right: 12px; z-index: 2; width: 42px; height: 42px; display: grid; place-items: center; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.surprise-close:hover, .surprise-close:focus-visible { color: var(--red); background: rgba(183,78,78,.08); outline: 0; }
+.surprise-date { position: absolute; top: 34px; right: clamp(64px, 9vw, 92px); padding: 8px 11px; border: 2px solid currentColor; color: var(--red); font: 700 11px Georgia, "Noto Serif SC", serif; letter-spacing: .14em; transform: rotate(7deg); }
+.surprise-mark { position: absolute; right: clamp(28px, 5vw, 54px); bottom: clamp(32px, 5vw, 50px); display: grid; justify-items: center; gap: 7px; color: var(--red); transform: rotate(-8deg); }
+.surprise-mark svg { width: 46px; height: 46px; stroke-width: 1.35; }.surprise-mark span { font: 700 10px Georgia, "Noto Serif SC", serif; letter-spacing: .16em; }
+.surprise-action { margin-top: 34px; }
+.accent-blue .surprise-card footer, .accent-blue .surprise-date, .accent-blue .surprise-mark { color: var(--blue); }.accent-blue .surprise-card::after { color: var(--blue); }
+.accent-gold .surprise-card footer, .accent-gold .surprise-date { color: #9a6d2c; }.accent-gold .surprise-mark { color: var(--red); }.accent-gold .surprise-card::after { color: #9a6d2c; }
+@keyframes surprise-fall { 0% { transform: translate3d(0, -20px, 0) rotate(0deg); opacity: 0; } 12% { opacity: .95; } 100% { transform: translate3d(18px, 108vh, 0) rotate(260deg); opacity: 0; } }
 .lightbox { position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; padding: 30px; background: rgba(27, 26, 23, .9); }.lightbox img { max-height: 88vh; max-width: min(1100px, 92vw); box-shadow: var(--shadow); }.lightbox button { position: absolute; top: 20px; right: 20px; border: 0; background: transparent; color: white; cursor: pointer; }
 
 .page-heading { padding-block: clamp(74px, 9vw, 126px) clamp(50px, 6vw, 82px); border-bottom: 1px solid var(--line); }
@@ -438,6 +462,14 @@ body::before {
   .album-photo-grid { columns: 1; }.album-photo-grid > article { margin-bottom: 30px; }
   .letter-index-card { grid-template-columns: 1fr; }.letter-mini-envelope { min-height: 180px; border-right: 0; border-bottom: 1px solid #ab9c83; }.letter-index-card > div:last-child { padding: 30px 25px; }.letter-index-card h2 { font-size: 30px; }
   .ending { min-height: 420px; }.ending h2 { font-size: 40px; }
+  .surprise-backdrop { padding: 14px; align-items: center; }
+  .surprise-card { min-height: 0; max-height: calc(100vh - 28px); overflow: auto; padding: 42px 24px 28px; transform: none; box-shadow: 8px 9px 0 rgba(34,31,26,.22), 0 18px 54px rgba(0,0,0,.24); }
+  .surprise-card::before { inset: 11px; }.surprise-card::after { display: none; }
+  .surprise-card h2 { max-width: 100%; margin-top: 16px; font-size: 38px; letter-spacing: 0; }
+  .surprise-card p { max-width: 100%; font-size: 16px; line-height: 1.9; }
+  .surprise-date { position: static; display: inline-block; margin: 24px 0 16px; transform: rotate(3deg); }
+  .surprise-mark { right: 24px; bottom: 24px; opacity: .18; pointer-events: none; }.surprise-mark span { display: none; }
+  .surprise-action { width: 100%; justify-content: center; }
   .music-drawer { right: 10px; bottom: calc(80px + env(safe-area-inset-bottom)); width: min(370px, calc(100% - 20px)); transition: transform .22s cubic-bezier(.22,1,.36,1); }
   .music-drawer.is-collapsed { width: 54px; right: 0; }
   .music-player { padding: 13px 13px 10px; box-shadow: 4px 5px 0 rgba(66,107,130,.22), 0 10px 24px rgba(57,47,32,.13); }

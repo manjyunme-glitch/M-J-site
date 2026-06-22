@@ -45,8 +45,6 @@ export function getContent(includeDrafts = false) {
   return {
     settings: {
       ...settings,
-      manBirthday: includeDrafts ? settings.manBirthday : "",
-      womanBirthday: includeDrafts ? settings.womanBirthday : "",
       musicUrl: musicPlaylist[0]?.url || null,
       musicPlaylist
     },

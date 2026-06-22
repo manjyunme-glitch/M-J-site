@@ -47,6 +47,111 @@ function calendarDuration(start: string, end: string) {
   return { years: Math.max(0, years), months: Math.max(0, months), days: Math.max(0, days) };
 }
 
+function addDays(date: string, days: number) {
+  const parsed = Date.parse(`${date}T00:00:00Z`);
+  if (Number.isNaN(parsed)) return "";
+  return new Date(parsed + days * 86400000).toISOString().slice(0, 10);
+}
+
+function sameMonthDay(date: string | null | undefined, today: string) {
+  return Boolean(date && date.length >= 10 && date.slice(5, 10) === today.slice(5, 10));
+}
+
+function yearsSince(date: string, today: string) {
+  const [year, month, day] = date.split("-").map(Number);
+  const [todayYear, todayMonth, todayDay] = today.split("-").map(Number);
+  if (![year, month, day, todayYear, todayMonth, todayDay].every(Number.isFinite)) return 0;
+  let years = todayYear - year;
+  if (todayMonth < month || (todayMonth === month && todayDay < day)) years -= 1;
+  return Math.max(0, years);
+}
+
+type SpecialSurprise = {
+  id: string;
+  storageKey: string;
+  kicker: string;
+  title: string;
+  message: string;
+  signature: string;
+  dateLabel: string;
+  accent: "blue" | "red" | "gold";
+};
+
+function formatSpecialDate(date: string) {
+  return date.replaceAll("-", ".");
+}
+
+function birthdayFromAnniversaries(content: Content, name: string) {
+  return content.anniversaries.find((item) => item.enabled && item.title.includes(name) && item.title.includes("生日"))?.eventDate || "";
+}
+
+function getSpecialSurprise(content: Content, today = shanghaiDate()): SpecialSurprise | null {
+  const { settings } = content;
+  const signature = `From ${settings.manName}`;
+  const womanBirthday = settings.womanBirthday || birthdayFromAnniversaries(content, settings.womanName);
+  const manBirthday = settings.manBirthday || birthdayFromAnniversaries(content, settings.manName);
+  const candidates: Array<Omit<SpecialSurprise, "storageKey" | "dateLabel">> = [];
+
+  if (sameMonthDay(womanBirthday, today)) {
+    candidates.push({
+      id: "woman-birthday",
+      kicker: "BIRTHDAY LETTER",
+      title: `${settings.womanName}，生日快乐`,
+      message: "今天你不用努力可爱，也不用证明什么；你出现本身，就已经是我这一年最想感谢的事。愿我能把你照顾得更安心一点，把你的每个小愿望都慢慢陪你实现。",
+      signature,
+      accent: "red"
+    });
+  }
+
+  if (sameMonthDay(manBirthday, today)) {
+    candidates.push({
+      id: "man-birthday",
+      kicker: "BIRTHDAY WISH",
+      title: "今天，我想把生日愿望也留给我们",
+      message: `又长大一岁，最想许的愿望还是和你有关：愿我一直记得珍惜 ${settings.womanName}，也愿我们继续好好说话、好好相爱，把未来过成可以回头微笑的样子。`,
+      signature,
+      accent: "blue"
+    });
+  }
+
+  if (addDays(settings.togetherDate, 100) === today || daysBetween(settings.togetherDate, today) === 100) {
+    candidates.push({
+      id: "love-100",
+      kicker: "100 DAYS TOGETHER",
+      title: "今天是我们相爱的第 100 天",
+      message: "从我们开始恋爱的那一天到今天，我还是想把答案再说一遍：谢谢你愿意走进我的生活。以后每一个普通日子，我都会更认真地爱你，更及时地让你感到被坚定选择。",
+      signature,
+      accent: "gold"
+    });
+  }
+
+  const loveYears = yearsSince(settings.togetherDate, today);
+  if (loveYears >= 1 && sameMonthDay(settings.togetherDate, today)) {
+    candidates.push({
+      id: `love-anniversary-${loveYears}`,
+      kicker: "LOVE ANNIVERSARY",
+      title: loveYears === 1 ? "相爱一周年快乐" : `相爱 ${loveYears} 周年快乐`,
+      message: `谢谢你把这一段时间交给我。越喜欢你，越觉得爱不是一句话说完，而是在每一次选择里都把 ${settings.womanName} 放进心里。下一年，也请继续让我牵住你。`,
+      signature,
+      accent: "red"
+    });
+  }
+
+  if (today.endsWith("-05-20")) {
+    candidates.push({
+      id: "may-20",
+      kicker: "LOVE CODE · 520",
+      title: "520 快乐",
+      message: "原来这个数字不是用来说一次就结束，而是提醒我：遇见你以后，连日期都开始偷偷偏心。今天也想认真告诉你，我爱你，且不只在 520 爱你。",
+      signature,
+      accent: "blue"
+    });
+  }
+
+  const surprise = candidates[0];
+  return surprise ? { ...surprise, dateLabel: formatSpecialDate(today), storageKey: `mj-special-surprise:v1:${today}:${surprise.id}` } : null;
+}
+
 function nextAnniversary(items: Anniversary[]) {
   const today = shanghaiDate();
   const [year] = today.split("-").map(Number);
@@ -385,6 +490,76 @@ function MusicPlayer({ tracks, defaultMode }: { tracks: MusicTrack[]; defaultMod
   );
 }
 
+function SpecialDaySurprise({ content }: { content: Content }) {
+  const root = useRef<HTMLDivElement>(null);
+  const surprise = useMemo(() => getSpecialSurprise(content), [content]);
+  const [active, setActive] = useState<SpecialSurprise | null>(null);
+
+  useEffect(() => {
+    if (!surprise) return;
+    try {
+      if (window.localStorage.getItem(surprise.storageKey)) return;
+    } catch {
+      // Local storage can be unavailable in private browser modes.
+    }
+    const timer = window.setTimeout(() => setActive(surprise), 420);
+    return () => window.clearTimeout(timer);
+  }, [surprise]);
+
+  useEffect(() => {
+    if (!active) return;
+    try {
+      window.localStorage.setItem(active.storageKey, "seen");
+    } catch {
+      // Showing the surprise matters more than persisting the marker.
+    }
+  }, [active]);
+
+  useEffect(() => {
+    if (!active) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setActive(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [active]);
+
+  useGSAP(() => {
+    if (!active || !root.current) return;
+    const media = gsap.matchMedia();
+    media.add("(prefers-reduced-motion: no-preference)", () => {
+      const card = root.current?.querySelector<HTMLElement>(".surprise-card");
+      if (!card) return;
+      const floaters = Array.from(root.current?.querySelectorAll<HTMLElement>(".surprise-float") || []);
+      gsap.fromTo(card, { autoAlpha: 0, y: 28, rotate: -2.2, scale: .96 }, { autoAlpha: 1, y: 0, rotate: 0, scale: 1, duration: .72, ease: "back.out(1.35)" });
+      gsap.from(floaters, { autoAlpha: 0, y: -70, rotation: () => gsap.utils.random(-42, 42), duration: 1.15, stagger: .032, ease: "power2.out" });
+    });
+    return () => media.revert();
+  }, { scope: root, dependencies: [active?.id], revertOnUpdate: true });
+
+  if (!active) return null;
+
+  const floaters = ["520", "100", "M", "J", "LOVE", "3·14", "♡", "✦", "520", "♡", "M", "J", "100", "✦", "LOVE", "♡"];
+  return (
+    <div ref={root} className={`surprise-backdrop accent-${active.accent}`} role="dialog" aria-modal="true" aria-labelledby="surprise-title" onClick={() => setActive(null)}>
+      <div className="surprise-fall" aria-hidden="true">
+        {floaters.map((label, index) => <span className="surprise-float" key={`${label}-${index}`} style={{ left: `${6 + (index * 83) % 88}%`, animationDelay: `${index * .13}s` }}>{label}</span>)}
+      </div>
+      <section className="surprise-card" onClick={(event) => event.stopPropagation()}>
+        <button type="button" className="surprise-close" aria-label="收起惊喜" onClick={() => setActive(null)}><X size={18} /></button>
+        <span className="tape tape-red" />
+        <div className="surprise-date">{active.dateLabel}</div>
+        <div className="surprise-mark"><Heart /><span>M × J</span></div>
+        <small>{active.kicker}</small>
+        <h2 id="surprise-title">{active.title}</h2>
+        <p>{active.message}</p>
+        <footer>{active.signature}</footer>
+        <button type="button" className="paper-button surprise-action" onClick={() => setActive(null)}><Heart size={17} /> 收好这一天</button>
+      </section>
+    </div>
+  );
+}
+
 function SiteNavigation() {
   const [hidden, setHidden] = useState(false);
   const location = useLocation();
@@ -641,6 +816,7 @@ function Journal({ content }: { content: Content }) {
         </Routes>
       </div>
       <MusicPlayer tracks={content.settings.musicPlaylist} defaultMode={content.settings.musicMode} />
+      <SpecialDaySurprise content={content} />
       {lightbox && <div className="lightbox" role="dialog" aria-modal="true" onClick={() => setLightbox(null)}><button aria-label="关闭"><X /></button><img src={lightbox.replace("variant=thumb", "variant=web")} alt="相册大图" onClick={(event) => event.stopPropagation()} /></div>}
     </div>
   );
