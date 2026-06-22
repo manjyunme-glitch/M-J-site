@@ -68,7 +68,6 @@ function yearsSince(date: string, today: string) {
 
 type SpecialSurprise = {
   id: string;
-  storageKey: string;
   kicker: string;
   title: string;
   message: string;
@@ -149,7 +148,7 @@ function getSpecialSurprise(content: Content, today = shanghaiDate()): SpecialSu
   }
 
   const surprise = candidates[0];
-  return surprise ? { ...surprise, dateLabel: formatSpecialDate(today), storageKey: `mj-special-surprise:v1:${today}:${surprise.id}` } : null;
+  return surprise ? { ...surprise, dateLabel: formatSpecialDate(today) } : null;
 }
 
 function nextAnniversary(items: Anniversary[]) {
@@ -494,26 +493,21 @@ function SpecialDaySurprise({ content }: { content: Content }) {
   const root = useRef<HTMLDivElement>(null);
   const surprise = useMemo(() => getSpecialSurprise(content), [content]);
   const [active, setActive] = useState<SpecialSurprise | null>(null);
+  const [hasOpened, setHasOpened] = useState(false);
 
   useEffect(() => {
-    if (!surprise) return;
-    try {
-      if (window.localStorage.getItem(surprise.storageKey)) return;
-    } catch {
-      // Local storage can be unavailable in private browser modes.
+    if (!surprise) {
+      setActive(null);
+      setHasOpened(false);
+      return;
     }
-    const timer = window.setTimeout(() => setActive(surprise), 420);
+    setHasOpened(false);
+    const timer = window.setTimeout(() => {
+      setActive(surprise);
+      setHasOpened(true);
+    }, 420);
     return () => window.clearTimeout(timer);
-  }, [surprise]);
-
-  useEffect(() => {
-    if (!active) return;
-    try {
-      window.localStorage.setItem(active.storageKey, "seen");
-    } catch {
-      // Showing the surprise matters more than persisting the marker.
-    }
-  }, [active]);
+  }, [surprise?.id]);
 
   useEffect(() => {
     if (!active) return;
@@ -537,26 +531,30 @@ function SpecialDaySurprise({ content }: { content: Content }) {
     return () => media.revert();
   }, { scope: root, dependencies: [active?.id], revertOnUpdate: true });
 
-  if (!active) return null;
-
   const floaters = ["520", "100", "M", "J", "LOVE", "3·14", "♡", "✦", "520", "♡", "M", "J", "100", "✦", "LOVE", "♡"];
   return (
-    <div ref={root} className={`surprise-backdrop accent-${active.accent}`} role="dialog" aria-modal="true" aria-labelledby="surprise-title" onClick={() => setActive(null)}>
-      <div className="surprise-fall" aria-hidden="true">
-        {floaters.map((label, index) => <span className="surprise-float" key={`${label}-${index}`} style={{ left: `${6 + (index * 83) % 88}%`, animationDelay: `${index * .13}s` }}>{label}</span>)}
-      </div>
-      <section className="surprise-card" onClick={(event) => event.stopPropagation()}>
-        <button type="button" className="surprise-close" aria-label="收起惊喜" onClick={() => setActive(null)}><X size={18} /></button>
-        <span className="tape tape-red" />
-        <div className="surprise-date">{active.dateLabel}</div>
-        <div className="surprise-mark"><Heart /><span>M × J</span></div>
-        <small>{active.kicker}</small>
-        <h2 id="surprise-title">{active.title}</h2>
-        <p>{active.message}</p>
-        <footer>{active.signature}</footer>
-        <button type="button" className="paper-button surprise-action" onClick={() => setActive(null)}><Heart size={17} /> 收好这一天</button>
-      </section>
-    </div>
+    <>
+      {active && <div ref={root} className={`surprise-backdrop accent-${active.accent}`} role="dialog" aria-modal="true" aria-labelledby="surprise-title" onClick={() => setActive(null)}>
+        <div className="surprise-fall" aria-hidden="true">
+          {floaters.map((label, index) => <span className="surprise-float" key={`${label}-${index}`} style={{ left: `${6 + (index * 83) % 88}%`, animationDelay: `${index * .13}s` }}>{label}</span>)}
+        </div>
+        <section className="surprise-card" onClick={(event) => event.stopPropagation()}>
+          <button type="button" className="surprise-close" aria-label="收起惊喜" onClick={() => setActive(null)}><X size={18} /></button>
+          <span className="tape tape-red" />
+          <div className="surprise-date">{active.dateLabel}</div>
+          <div className="surprise-mark"><Heart /><span>M × J</span></div>
+          <small>{active.kicker}</small>
+          <h2 id="surprise-title">{active.title}</h2>
+          <p>{active.message}</p>
+          <footer>{active.signature}</footer>
+          <button type="button" className="paper-button surprise-action" onClick={() => setActive(null)}><Heart size={17} /> 收好这一天</button>
+        </section>
+      </div>}
+      {surprise && hasOpened && !active && <button type="button" className={`surprise-replay accent-${surprise.accent}`} onClick={() => { setActive(surprise); setHasOpened(true); }} aria-label="重新打开今日惊喜">
+        <Sparkles size={18} />
+        <span>今日惊喜</span>
+      </button>}
+    </>
   );
 }
 
