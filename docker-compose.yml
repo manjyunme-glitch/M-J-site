@@ -1,6 +1,11 @@
 services:
   love-journal:
-    build: .
+    build:
+      context: .
+      args:
+        APP_COMMIT_SHA: "${APP_COMMIT_SHA:-}"
+        APP_COMMIT_DATE: "${APP_COMMIT_DATE:-}"
+        APP_COMMIT_REF: "${APP_COMMIT_REF:-}"
     pull_policy: build
     container_name: manjyun-jshaorii-love-journal
     restart: unless-stopped

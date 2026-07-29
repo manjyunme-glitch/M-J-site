@@ -2,20 +2,19 @@ import fs from "node:fs";
 import path from "node:path";
 import { config } from "./config.js";
 
-type CommitInfo = {
+export type CommitInfo = {
   sha: string;
   message: string;
   committedAt: string;
 };
 
-type BuildInfo = CommitInfo & {
+export type BuildInfo = CommitInfo & {
   repository: string;
   branch: string;
+  ref: string;
   builtAt: string;
   source: string;
 };
-
-type SavedBaseline = CommitInfo & { buildId: string };
 
 export type DeploymentStatus = {
   repository: string;
@@ -27,15 +26,19 @@ export type DeploymentStatus = {
   errorMessage?: string;
 };
 
-const emptyBuild = (): BuildInfo => ({
-  repository: config.githubRepository,
-  branch: config.githubBranch,
-  sha: process.env.APP_COMMIT_SHA || "",
-  message: process.env.APP_COMMIT_MESSAGE || "",
-  committedAt: process.env.APP_COMMIT_TIME || "",
-  builtAt: "",
-  source: process.env.APP_COMMIT_SHA ? "environment" : "unknown"
-});
+const emptyBuild = (): BuildInfo => {
+  const sha = process.env.APP_COMMIT_SHA?.trim() || "";
+  return {
+    repository: config.githubRepository,
+    branch: config.githubBranch,
+    ref: process.env.APP_COMMIT_REF?.trim() || "",
+    sha,
+    message: process.env.APP_COMMIT_MESSAGE || "",
+    committedAt: process.env.APP_COMMIT_DATE?.trim() || process.env.APP_COMMIT_TIME?.trim() || "",
+    builtAt: "",
+    source: sha ? "environment" : "unknown"
+  };
+};
 
 export function readBuildInfo(): BuildInfo {
   const filePath = path.resolve(process.cwd(), "build-info.json");
@@ -52,22 +55,15 @@ export function compareCommits(currentSha: string, latestSha: string): Deploymen
   return currentSha === latestSha ? "synced" : "outdated";
 }
 
-function baselinePath() {
-  return path.join(path.dirname(config.databasePath), "deployment-version.json");
-}
-
-function resolveCurrentBuild(current: BuildInfo, latest: CommitInfo): BuildInfo {
-  if (current.sha) return current;
-  const buildId = current.builtAt || "development";
-  try {
-    const saved = JSON.parse(fs.readFileSync(baselinePath(), "utf8")) as SavedBaseline;
-    if (saved.buildId === buildId && saved.sha) return { ...current, ...saved, source: "runtime-baseline" };
-  } catch {
-    // A missing baseline is expected on the first run of a new image.
-  }
-  const baseline = { ...latest, buildId };
-  fs.writeFileSync(baselinePath(), JSON.stringify(baseline, null, 2));
-  return { ...current, ...latest, source: "runtime-baseline" };
+export function createDeploymentStatus(current: BuildInfo, latest: CommitInfo, checkedAt: string): DeploymentStatus {
+  return {
+    repository: config.githubRepository,
+    branch: config.githubBranch,
+    status: compareCommits(current.sha, latest.sha),
+    current,
+    latest,
+    checkedAt
+  };
 }
 
 export async function getDeploymentStatus(): Promise<DeploymentStatus> {
@@ -101,15 +97,7 @@ export async function getDeploymentStatus(): Promise<DeploymentStatus> {
       message: data.commit?.message?.split("\n")[0] || "",
       committedAt: data.commit?.committer?.date || data.commit?.author?.date || ""
     };
-    const resolvedCurrent = resolveCurrentBuild(current, latest);
-    return {
-      repository: config.githubRepository,
-      branch: config.githubBranch,
-      status: compareCommits(resolvedCurrent.sha, latest.sha),
-      current: resolvedCurrent,
-      latest,
-      checkedAt
-    };
+    return createDeploymentStatus(current, latest, checkedAt);
   } catch (error) {
     return {
       repository: config.githubRepository,

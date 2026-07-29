@@ -3,6 +3,9 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY . .
+ARG APP_COMMIT_SHA
+ARG APP_COMMIT_DATE
+ARG APP_COMMIT_REF
 RUN npm run build
 
 FROM node:24-bookworm-slim AS runtime

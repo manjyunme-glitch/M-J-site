@@ -1,27 +1,43 @@
+import crypto from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
+import { config } from "./config.js";
 
 type SessionRole = "site" | "admin";
+type SessionCredential = "site" | "admin";
 
 const SITE_COOKIE = "mj_site_session";
 const ADMIN_COOKIE = "mj_admin_session";
 
-function readSession(req: Request, cookieName: string, role: SessionRole) {
+function sessionVersion(credential: SessionCredential) {
+  const passwordHash = credential === "admin" ? config.adminPasswordHash : config.sitePasswordHash;
+  return crypto.createHmac("sha256", config.cookieSecret)
+    .update(`m-j-session:${credential}\0${passwordHash}`)
+    .digest("base64url");
+}
+
+function readSession(req: Request, cookieName: string, role: SessionRole, credentials: readonly SessionCredential[]) {
   const raw = req.signedCookies?.[cookieName];
   if (!raw || typeof raw !== "string") return false;
   try {
-    const value = JSON.parse(raw) as { role?: SessionRole; exp?: number };
-    return value.role === role && typeof value.exp === "number" && value.exp > Date.now();
+    const value = JSON.parse(raw) as { role?: SessionRole; credential?: SessionCredential; version?: string; exp?: number };
+    return value.role === role
+      && typeof value.credential === "string"
+      && credentials.includes(value.credential)
+      && typeof value.version === "string"
+      && value.version === sessionVersion(value.credential)
+      && typeof value.exp === "number"
+      && value.exp > Date.now();
   } catch {
     return false;
   }
 }
 
 export function hasSiteAccess(req: Request) {
-  return readSession(req, SITE_COOKIE, "site") || readSession(req, ADMIN_COOKIE, "admin");
+  return readSession(req, SITE_COOKIE, "site", ["site", "admin"]) || readSession(req, ADMIN_COOKIE, "admin", ["admin"]);
 }
 
 export function hasAdminAccess(req: Request) {
-  return readSession(req, ADMIN_COOKIE, "admin");
+  return readSession(req, ADMIN_COOKIE, "admin", ["admin"]);
 }
 
 function cookieOptions(maxAge: number) {
@@ -35,15 +51,15 @@ function cookieOptions(maxAge: number) {
   };
 }
 
-export function createSiteSession(res: Response) {
+export function createSiteSession(res: Response, credential: SessionCredential = "site") {
   const maxAge = 30 * 24 * 60 * 60 * 1000;
-  res.cookie(SITE_COOKIE, JSON.stringify({ role: "site", exp: Date.now() + maxAge }), cookieOptions(maxAge));
+  res.cookie(SITE_COOKIE, JSON.stringify({ role: "site", credential, version: sessionVersion(credential), exp: Date.now() + maxAge }), cookieOptions(maxAge));
 }
 
 export function createAdminSession(res: Response) {
   const maxAge = 12 * 60 * 60 * 1000;
-  res.cookie(ADMIN_COOKIE, JSON.stringify({ role: "admin", exp: Date.now() + maxAge }), cookieOptions(maxAge));
-  createSiteSession(res);
+  res.cookie(ADMIN_COOKIE, JSON.stringify({ role: "admin", credential: "admin", version: sessionVersion("admin"), exp: Date.now() + maxAge }), cookieOptions(maxAge));
+  createSiteSession(res, "admin");
 }
 
 export function clearSessions(res: Response) {

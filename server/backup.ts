@@ -13,6 +13,16 @@ const pendingBackups = new Map<string, { directory: string; manifest: BackupMani
 const pendingLifetimeMs = 30 * 60 * 1000;
 const maxArchiveEntries = 20_000;
 const maxExtractedBytes = 50 * 1024 * 1024 * 1024;
+let fullBackupExportActive = false;
+const backupExportStatusLifetimeMs = 24 * 60 * 60 * 1000;
+const backupExportStatuses = new Map<string, { state: BackupExportLifecycleState; error?: string; expiresAt: number }>();
+
+export type BackupExportLifecycleState = "ready" | "running" | "complete" | "failed";
+export type BackupExportLifecycleStatus =
+  | { state: Exclude<BackupExportLifecycleState, "failed"> }
+  | { state: "failed"; error: string };
+
+const backupExportFailureMessage = "备份导出失败，请稍后重试";
 
 fs.mkdirSync(stagingRoot, { recursive: true });
 
@@ -20,8 +30,91 @@ function removeDirectory(target: string) {
   try { fs.rmSync(target, { recursive: true, force: true }); } catch { /* Stale staging files can be cleaned on the next run. */ }
 }
 
-function cleanupExpiredBackups() {
-  const now = Date.now();
+const importDirectoryPattern = /^import-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const mediaUploadDirectoryPattern = /^media-[a-z0-9_-]{6}$/i;
+const multerTemporaryFilePattern = /^[0-9a-f]{32}$/i;
+const backupExportDirectoryPattern = /^\.backup-export-[a-z0-9]{6}$/i;
+const backupExportCheckDirectoryPattern = /^\.backup-export-check-[a-z0-9]{6}$/i;
+
+export function cleanupBackupStaging(root: string, protectedDirectories: Iterable<string> = []) {
+  const resolvedRoot = path.resolve(root);
+  const protectedPaths = new Set([...protectedDirectories].map((item) => path.resolve(item)));
+  const removed: string[] = [];
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(resolvedRoot, { withFileTypes: true });
+  } catch {
+    return removed;
+  }
+
+  for (const entry of entries) {
+    const target = path.resolve(resolvedRoot, entry.name);
+    if (path.dirname(target) !== resolvedRoot || protectedPaths.has(target)) continue;
+    if (entry.isDirectory() && (importDirectoryPattern.test(entry.name) || mediaUploadDirectoryPattern.test(entry.name))) {
+      removeDirectory(target);
+      if (!fs.existsSync(target)) removed.push(target);
+    } else if (entry.isFile() && multerTemporaryFilePattern.test(entry.name)) {
+      try {
+        fs.rmSync(target, { force: true });
+        if (!fs.existsSync(target)) removed.push(target);
+      } catch { /* A concurrently used upload must not prevent startup. */ }
+    }
+  }
+  return removed;
+}
+
+cleanupBackupStaging(stagingRoot);
+
+export function cleanupBackupExportDirectories(root: string) {
+  const resolvedRoot = path.resolve(root);
+  const removed: string[] = [];
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(resolvedRoot, { withFileTypes: true });
+  } catch {
+    return removed;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || (!backupExportDirectoryPattern.test(entry.name) && !backupExportCheckDirectoryPattern.test(entry.name))) continue;
+    const target = path.resolve(resolvedRoot, entry.name);
+    if (path.dirname(target) !== resolvedRoot) continue;
+    removeDirectory(target);
+    if (!fs.existsSync(target)) removed.push(target);
+  }
+  return removed;
+}
+
+cleanupBackupExportDirectories(config.uploadDir);
+
+function cleanupExpiredBackupExportStatuses(now = Date.now()) {
+  for (const [id, item] of backupExportStatuses) {
+    if (item.expiresAt <= now) backupExportStatuses.delete(id);
+  }
+}
+
+export function recordBackupExportStatus(id: string, state: BackupExportLifecycleState, now = Date.now()): BackupExportLifecycleStatus {
+  cleanupExpiredBackupExportStatuses(now);
+  const normalizedId = id.toLowerCase();
+  if (state === "failed") {
+    const status = { state, error: backupExportFailureMessage } as const;
+    backupExportStatuses.set(normalizedId, { ...status, expiresAt: now + backupExportStatusLifetimeMs });
+    return status;
+  }
+  const status = { state } as const;
+  backupExportStatuses.set(normalizedId, { ...status, expiresAt: now + backupExportStatusLifetimeMs });
+  return status;
+}
+
+export function getBackupExportStatus(id: string, now = Date.now()): BackupExportLifecycleStatus | null {
+  cleanupExpiredBackupExportStatuses(now);
+  const item = backupExportStatuses.get(id.toLowerCase());
+  if (!item) return null;
+  return item.state === "failed"
+    ? { state: item.state, error: item.error ?? backupExportFailureMessage }
+    : { state: item.state };
+}
+
+export function cleanupExpiredBackups(now = Date.now()) {
   for (const [token, item] of pendingBackups) {
     if (item.expiresAt <= now) {
       pendingBackups.delete(token);
@@ -43,6 +136,30 @@ function mediaFilenames(tables: BackupTables) {
   return [...new Set(tables.media.flatMap((row) => [row.file_path, row.web_path, row.thumb_path]).filter((value): value is string => typeof value === "string" && value.length > 0))];
 }
 
+function inspectBackupExportSource() {
+  const tables = readTables();
+  const filenames = mediaFilenames(tables);
+  let mediaBytes = 0;
+  for (const filename of filenames) {
+    if (!isSafeStoredFilename(filename)) throw new Error("数据库中存在不安全的媒体路径");
+    const source = path.join(config.uploadDir, filename);
+    let descriptor: number | undefined;
+    try {
+      descriptor = fs.openSync(source, "r");
+      const stat = fs.fstatSync(descriptor);
+      if (!stat.isFile()) throw new Error(`媒体文件不可读：${filename}`);
+      mediaBytes += stat.size;
+    } catch {
+      throw new Error(`媒体文件缺失或不可读：${filename}`);
+    } finally {
+      if (descriptor !== undefined) {
+        try { fs.closeSync(descriptor); } catch { /* Preserve the source validation error. */ }
+      }
+    }
+  }
+  return { tables, filenames, mediaBytes };
+}
+
 function archivePathIsSafe(value: string) {
   const normalized = value.replaceAll("\\", "/");
   return normalized === "manifest.json" || normalized === "media" || normalized === "media/" || (normalized.startsWith("media/") && isSafeStoredFilename(normalized.slice("media/".length)));
@@ -53,18 +170,37 @@ function makeBackupFilename(createdAt: Date) {
   return `m-j-site-backup-${stamp}.mjsite`;
 }
 
-export async function streamFullBackup(res: Response) {
-  const directory = fs.mkdtempSync(path.join(config.uploadDir, ".backup-export-"));
-  const mediaDirectory = path.join(directory, "media");
-  fs.mkdirSync(mediaDirectory);
+export class BackupExportBusyError extends Error {
+  constructor() {
+    super("Backup export is already running");
+    this.name = "BackupExportBusyError";
+  }
+}
+
+export function preflightFullBackup() {
+  if (fullBackupExportActive) throw new BackupExportBusyError();
+  const directory = fs.mkdtempSync(path.join(config.uploadDir, ".backup-export-check-"));
   try {
-    const tables = readTables();
-    let mediaBytes = 0;
-    for (const filename of mediaFilenames(tables)) {
-      if (!isSafeStoredFilename(filename)) throw new Error("数据库中存在不安全的媒体路径");
+    const probe = path.join(directory, ".write-probe");
+    fs.writeFileSync(probe, "", { flag: "wx" });
+    fs.rmSync(probe, { force: true });
+    inspectBackupExportSource();
+  } finally {
+    removeDirectory(directory);
+  }
+}
+
+export async function streamFullBackup(res: Response) {
+  if (fullBackupExportActive) throw new BackupExportBusyError();
+  fullBackupExportActive = true;
+  let directory: string | undefined;
+  try {
+    directory = fs.mkdtempSync(path.join(config.uploadDir, ".backup-export-"));
+    const mediaDirectory = path.join(directory, "media");
+    fs.mkdirSync(mediaDirectory);
+    const { tables, filenames, mediaBytes } = inspectBackupExportSource();
+    for (const filename of filenames) {
       const source = path.join(config.uploadDir, filename);
-      if (!fs.existsSync(source)) throw new Error(`媒体文件缺失：${filename}`);
-      mediaBytes += fs.statSync(source).size;
       const target = path.join(mediaDirectory, filename);
       try { fs.linkSync(source, target); } catch { fs.copyFileSync(source, target); }
     }
@@ -76,7 +212,8 @@ export async function streamFullBackup(res: Response) {
     res.setHeader("Cache-Control", "no-store");
     await pipeline(create({ cwd: directory, gzip: true, portable: true }, ["manifest.json", "media"]), res);
   } finally {
-    removeDirectory(directory);
+    if (directory) removeDirectory(directory);
+    fullBackupExportActive = false;
   }
 }
 
@@ -110,8 +247,9 @@ export async function inspectFullBackup(filePath: string, originalName: string) 
     }
     manifest.summary = buildBackupSummary(manifest.tables, mediaBytes);
     const sizeBytes = fs.statSync(filePath).size;
-    pendingBackups.set(token, { directory, manifest, filename: originalName, sizeBytes, expiresAt: Date.now() + pendingLifetimeMs });
-    return { token, filename: originalName, sizeBytes, format: manifest.format, version: manifest.version, createdAt: manifest.createdAt, summary: manifest.summary, expiresAt: new Date(Date.now() + pendingLifetimeMs).toISOString() };
+    const expiresAt = Date.now() + pendingLifetimeMs;
+    pendingBackups.set(token, { directory, manifest, filename: originalName, sizeBytes, expiresAt });
+    return { token, filename: originalName, sizeBytes, format: manifest.format, version: manifest.version, createdAt: manifest.createdAt, summary: manifest.summary, expiresAt: new Date(expiresAt).toISOString() };
   } catch (error) {
     removeDirectory(directory);
     throw error;

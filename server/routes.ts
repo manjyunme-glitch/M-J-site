@@ -1,5 +1,9 @@
+import crypto from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
-import { Router } from "express";
+import { Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { Router, type NextFunction, type Request, type Response } from "express";
 import bcrypt from "bcryptjs";
 import multer from "multer";
 import { rateLimit } from "express-rate-limit";
@@ -8,9 +12,10 @@ import { config } from "./config.js";
 import { db, camelizeRow } from "./db.js";
 import { clearSessions, createAdminSession, createSiteSession, hasAdminAccess, hasSiteAccess, requireAdmin, requireSite } from "./auth.js";
 import { getContent } from "./content.js";
-import { imageFilterPresets, persistUpload, removeMediaFiles, resolveMediaPath, updateImageFilter } from "./media.js";
+import { imageFilterPresets, isMediaPubliclyAccessible, persistUploads, removeMediaFiles, resolveMediaPath, updateImageFilter } from "./media.js";
 import { getDeploymentStatus } from "./version.js";
-import { inspectFullBackup, restoreInspectedBackup, streamFullBackup } from "./backup.js";
+import { BackupExportBusyError, getBackupExportStatus, inspectFullBackup, preflightFullBackup, recordBackupExportStatus, restoreInspectedBackup, streamFullBackup } from "./backup.js";
+import { RequestTooLargeError } from "./http.js";
 
 export const api = Router();
 
@@ -56,23 +61,40 @@ api.get("/content", requireSite, (_req, res) => res.json(getContent(false)));
 api.get("/media/:id", requireSite, (req, res) => {
   const id = Number(req.params.id);
   const variant = typeof req.query.variant === "string" ? req.query.variant : "web";
-  if (!Number.isInteger(id)) return res.status(404).end();
+  const admin = hasAdminAccess(req);
+  if (!Number.isInteger(id) || !["web", "thumb", "original"].includes(variant)) return res.status(404).end();
+  if (variant === "original" && !admin) return res.status(404).end();
+  if (!admin && !isMediaPubliclyAccessible(id)) return res.status(404).end();
   const media = resolveMediaPath(id, variant);
   if (!media) return res.status(404).end();
   res.type(media.mime);
-  res.setHeader("Cache-Control", "private, max-age=86400");
+  res.setHeader("Cache-Control", "private, no-store");
   res.sendFile(path.basename(media.target), { root: path.dirname(media.target) });
 });
 
 api.get("/admin/content", requireAdmin, (_req, res) => res.json(getContent(true)));
 
 const bool = z.union([z.boolean(), z.number(), z.string()]).transform((value) => value === true || value === 1 || value === "1" || value === "true" ? 1 : 0);
-const nullableDate = z.string().max(32).nullable().optional().transform((value) => value || null);
+
+export function isValidCalendarDate(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (year < 1 || month < 1 || month > 12 || day < 1) return false;
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day <= daysInMonth[month - 1];
+}
+
+const calendarDate = z.string().refine(isValidCalendarDate, "请输入有效的日期");
+const nullableDate = z.string().refine((value) => !value || isValidCalendarDate(value), "请输入有效的日期").nullable().optional().transform((value) => value || null);
 
 const resourceDefinitions = {
   anniversaries: {
     table: "anniversaries",
-    schema: z.object({ title: z.string().min(1).max(120), eventDate: z.string().min(4).max(32), annual: bool, description: z.string().max(1000).default(""), enabled: bool, sortOrder: z.coerce.number().int().default(0) }),
+    schema: z.object({ title: z.string().min(1).max(120), eventDate: calendarDate, annual: bool, description: z.string().max(1000).default(""), enabled: bool, sortOrder: z.coerce.number().int().default(0) }),
     columns: ["title", "event_date", "annual", "description", "enabled", "sort_order"]
   },
   timeline: {
@@ -148,51 +170,111 @@ const settingsSchema = z.object({
   siteTitle: z.string().min(1).max(120),
   subtitle: z.string().min(1).max(240),
   heroNote: z.string().max(2000),
-  metDate: z.string().min(4).max(32),
-  togetherDate: z.string().min(4).max(32),
+  metDate: calendarDate,
+  togetherDate: calendarDate,
   manName: z.string().min(1).max(80),
-  manBirthday: z.string().min(4).max(32),
+  manBirthday: calendarDate,
   womanName: z.string().min(1).max(80),
-  womanBirthday: z.string().min(4).max(32),
+  womanBirthday: calendarDate,
   musicMediaId: z.coerce.number().int().positive().nullable().optional().transform((value) => value || null),
   musicMode: z.enum(["sequence", "repeat-one", "shuffle"]).default("sequence")
 });
 
-api.put("/admin/settings", requireAdmin, (req, res) => {
-  const parsed = settingsSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message || "设置格式不正确" });
+const musicTracksSchema = z.array(z.object({
+  id: z.coerce.number().int().positive(),
+  enabled: bool,
+  title: z.string().max(160).default(""),
+  artist: z.string().max(160).default(""),
+  sortOrder: z.coerce.number().int().default(0)
+})).max(200).superRefine((tracks, context) => {
+  const ids = tracks.map((item) => item.id);
+  if (new Set(ids).size !== ids.length) context.addIssue({ code: "custom", message: "歌单中不能重复包含同一首歌曲" });
+});
+
+const musicLibrarySchema = z.object({ tracks: musicTracksSchema });
+const settingsWithMusicSchema = z.object({ settings: settingsSchema, tracks: musicTracksSchema });
+type SettingsInput = z.infer<typeof settingsSchema>;
+type MusicTrackInput = z.infer<typeof musicTracksSchema>[number];
+
+function validateMusicReferences(settings: SettingsInput | null, tracks: MusicTrackInput[] | null) {
+  if (settings?.musicMediaId) {
+    const music = db.prepare("SELECT id FROM media WHERE id = ? AND kind = 'audio'").get(settings.musicMediaId);
+    if (!music) return "背景音乐不存在或不是音频";
+  }
+  if (tracks) {
+    const ids = tracks.map((item) => item.id);
+    const existing = ids.length
+      ? db.prepare(`SELECT id FROM media WHERE kind = 'audio' AND id IN (${ids.map(() => "?").join(",")})`).all(...ids) as Array<{ id: number }>
+      : [];
+    if (existing.length !== ids.length) return "歌单中包含不存在的歌曲";
+  }
+  return null;
+}
+
+function updateSettings(settings: SettingsInput) {
   db.prepare(`
     UPDATE settings SET site_title = ?, subtitle = ?, hero_note = ?, met_date = ?, together_date = ?,
       man_name = ?, man_birthday = ?, woman_name = ?, woman_birthday = ?, music_media_id = ?, music_mode = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = 1
-  `).run(parsed.data.siteTitle, parsed.data.subtitle, parsed.data.heroNote, parsed.data.metDate, parsed.data.togetherDate, parsed.data.manName, parsed.data.manBirthday, parsed.data.womanName, parsed.data.womanBirthday, parsed.data.musicMediaId, parsed.data.musicMode);
-  res.json(camelizeRow(db.prepare("SELECT * FROM settings WHERE id = 1").get()));
-});
+  `).run(
+    settings.siteTitle,
+    settings.subtitle,
+    settings.heroNote,
+    settings.metDate,
+    settings.togetherDate,
+    settings.manName,
+    settings.manBirthday,
+    settings.womanName,
+    settings.womanBirthday,
+    settings.musicMediaId,
+    settings.musicMode
+  );
+}
 
-const musicLibrarySchema = z.object({
-  tracks: z.array(z.object({
-    id: z.coerce.number().int().positive(),
-    enabled: bool,
-    title: z.string().max(160).default(""),
-    artist: z.string().max(160).default(""),
-    sortOrder: z.coerce.number().int().default(0)
-  })).max(200)
+function updateMusicLibrary(tracks: MusicTrackInput[]) {
+  db.prepare("UPDATE media SET playlist_enabled = 0 WHERE kind = 'audio'").run();
+  const update = db.prepare("UPDATE media SET display_name = ?, caption = ?, playlist_enabled = ?, sort_order = ? WHERE id = ? AND kind = 'audio'");
+  tracks.forEach((item) => update.run(item.title, item.artist, item.enabled, item.sortOrder, item.id));
+}
+
+function inTransaction(work: () => void) {
+  db.exec("BEGIN");
+  try {
+    work();
+    db.exec("COMMIT");
+  } catch (error) {
+    try { db.exec("ROLLBACK"); } catch { /* Preserve the original database error. */ }
+    throw error;
+  }
+}
+
+api.put("/admin/settings", requireAdmin, (req, res) => {
+  const combinedRequest = Boolean(req.body && typeof req.body === "object" && !Array.isArray(req.body) && ("settings" in req.body || "tracks" in req.body));
+  const parsed = combinedRequest ? settingsWithMusicSchema.safeParse(req.body) : settingsSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message || "设置格式不正确" });
+  const settings = combinedRequest ? (parsed.data as z.infer<typeof settingsWithMusicSchema>).settings : parsed.data as SettingsInput;
+  const tracks = combinedRequest ? (parsed.data as z.infer<typeof settingsWithMusicSchema>).tracks : null;
+  const referenceError = validateMusicReferences(settings, tracks);
+  if (referenceError) return res.status(400).json({ error: referenceError });
+  try {
+    inTransaction(() => {
+      updateSettings(settings);
+      if (tracks) updateMusicLibrary(tracks);
+    });
+  } catch (error) {
+    return res.status(400).json({ error: error instanceof Error ? error.message : "设置保存失败" });
+  }
+  res.json(camelizeRow(db.prepare("SELECT * FROM settings WHERE id = 1").get()));
 });
 
 api.put("/admin/music", requireAdmin, (req, res) => {
   const parsed = musicLibrarySchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message || "歌曲信息格式不正确" });
-  const ids = parsed.data.tracks.map((item) => item.id);
-  const existing = ids.length ? db.prepare(`SELECT id FROM media WHERE kind = 'audio' AND id IN (${ids.map(() => "?").join(",")})`).all(...ids) as Array<{ id: number }> : [];
-  if (existing.length !== new Set(ids).size) return res.status(400).json({ error: "歌单中包含不存在的歌曲" });
+  const referenceError = validateMusicReferences(null, parsed.data.tracks);
+  if (referenceError) return res.status(400).json({ error: referenceError });
   try {
-    db.exec("BEGIN");
-    db.prepare("UPDATE media SET playlist_enabled = 0 WHERE kind = 'audio'").run();
-    const update = db.prepare("UPDATE media SET display_name = ?, caption = ?, playlist_enabled = ?, sort_order = ? WHERE id = ? AND kind = 'audio'");
-    parsed.data.tracks.forEach((item) => update.run(item.title, item.artist, item.enabled, item.sortOrder, item.id));
-    db.exec("COMMIT");
+    inTransaction(() => updateMusicLibrary(parsed.data.tracks));
   } catch (error) {
-    db.exec("ROLLBACK");
     return res.status(400).json({ error: error instanceof Error ? error.message : "歌曲库保存失败" });
   }
   res.json({ ok: true });
@@ -311,12 +393,47 @@ api.get("/admin/deployment-status", requireAdmin, async (_req, res) => {
   res.json(await getDeploymentStatus());
 });
 
-api.get("/admin/backup/export", requireAdmin, async (_req, res) => {
+const optionalBackupExportIdSchema = z.union([z.string().uuid(), z.undefined()]);
+const missingBackupExportStatusMessage = "备份导出状态不存在或已过期";
+
+api.get("/admin/backup/export/status/:id", requireAdmin, (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  const parsed = z.string().uuid().safeParse(req.params.id);
+  if (!parsed.success) return res.status(404).json({ error: missingBackupExportStatusMessage });
+  const status = getBackupExportStatus(parsed.data);
+  if (!status) return res.status(404).json({ error: missingBackupExportStatusMessage });
+  res.json(status);
+});
+
+api.head("/admin/backup/export", requireAdmin, (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  const parsedId = optionalBackupExportIdSchema.safeParse(req.query.id);
+  if (!parsedId.success) return res.status(400).json({ error: "备份导出标识无效" });
+  const exportId = parsedId.data;
+  try {
+    preflightFullBackup();
+    if (exportId) recordBackupExportStatus(exportId, "ready");
+    res.status(204).end();
+  } catch (error) {
+    if (exportId) recordBackupExportStatus(exportId, "failed");
+    if (error instanceof BackupExportBusyError) return res.status(409).json({ error: "备份导出正在进行，请稍后再试" });
+    res.status(503).json({ error: "备份导出暂不可用" });
+  }
+});
+
+api.get("/admin/backup/export", requireAdmin, async (req, res) => {
+  const parsedId = optionalBackupExportIdSchema.safeParse(req.query.id);
+  if (!parsedId.success) return res.status(400).json({ error: "备份导出标识无效" });
+  const exportId = parsedId.data;
+  if (exportId) recordBackupExportStatus(exportId, "running");
   try {
     await streamFullBackup(res);
+    if (exportId) recordBackupExportStatus(exportId, "complete");
   } catch (error) {
-    if (!res.headersSent) res.status(500).json({ error: error instanceof Error ? error.message : "备份生成失败" });
-    else res.destroy(error instanceof Error ? error : undefined);
+    if (exportId) recordBackupExportStatus(exportId, "failed");
+    if (!res.headersSent && error instanceof BackupExportBusyError) res.status(409).json({ error: "备份导出正在进行，请稍后再试" });
+    else if (!res.headersSent) res.status(500).json({ error: "备份生成失败" });
+    else res.destroy();
   }
 });
 
@@ -341,34 +458,142 @@ api.post("/admin/backup/restore", requireAdmin, (req, res) => {
   }
 });
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { files: 30, fileSize: 30 * 1024 * 1024 } });
+const mediaUploadLimits = {
+  files: 30,
+  fileBytes: 30 * 1024 * 1024,
+  totalFileBytes: 300 * 1024 * 1024,
+  requestBytes: 305 * 1024 * 1024,
+  fields: 121,
+  fieldBytes: 16 * 1024,
+  parts: 151
+} as const;
 
-api.post("/admin/media", requireAdmin, upload.array("files", 30), async (req, res) => {
-  const files = (req.files || []) as Express.Multer.File[];
-  if (!files.length) return res.status(400).json({ error: "请选择文件" });
-  const albumId = req.body.albumId ? Number(req.body.albumId) : null;
-  const fieldAt = (key: string, index: number) => {
-    const value = req.body[key];
-    return Array.isArray(value) ? value[index] : index === 0 ? value : undefined;
+type MediaUploadState = { directory: string; totalBytes: number };
+const mediaUploadStates = new WeakMap<Request, MediaUploadState>();
+
+function mediaUploadState(req: Request) {
+  const current = mediaUploadStates.get(req);
+  if (current) return current;
+  const state = {
+    directory: fs.mkdtempSync(path.join(config.backupStagingDir, "media-")),
+    totalBytes: 0
   };
-  const filterAt = (index: number) => {
-    const value = String(fieldAt("filterPresets", index) || "original");
-    return (imageFilterPresets as readonly string[]).includes(value) ? value as typeof imageFilterPresets[number] : "original";
-  };
+  mediaUploadStates.set(req, state);
+  return state;
+}
+
+class MediaDiskStorage implements multer.StorageEngine {
+  _handleFile(req: Request, file: Express.Multer.File, callback: (error?: unknown, info?: Partial<Express.Multer.File>) => void) {
+    let state: MediaUploadState;
+    try {
+      state = mediaUploadState(req);
+    } catch (error) {
+      callback(error);
+      return;
+    }
+    const filename = crypto.randomUUID();
+    const target = path.join(state.directory, filename);
+    const output = fs.createWriteStream(target, { flags: "wx" });
+    let fileBytes = 0;
+    const limiter = new Transform({
+      transform(chunk: Buffer, _encoding, done) {
+        state.totalBytes += chunk.length;
+        fileBytes += chunk.length;
+        if (state.totalBytes > mediaUploadLimits.totalFileBytes) done(new RequestTooLargeError());
+        else done(null, chunk);
+      }
+    });
+
+    void pipeline(file.stream, limiter, output).then(() => {
+      callback(undefined, {
+        destination: state.directory,
+        filename,
+        path: target,
+        size: fileBytes
+      });
+    }).catch((error: unknown) => {
+      fs.rm(target, { force: true }, () => callback(error));
+    });
+  }
+
+  _removeFile(_req: Request, file: Express.Multer.File, callback: (error: Error | null) => void) {
+    if (typeof file.path !== "string" || !file.path) return callback(null);
+    fs.rm(file.path, { force: true }, callback);
+  }
+}
+
+function cleanupMediaUpload(req: Request) {
+  const state = mediaUploadStates.get(req);
+  mediaUploadStates.delete(req);
+  if (!state) return;
+  const root = path.resolve(config.backupStagingDir);
+  const directory = path.resolve(state.directory);
+  if (path.dirname(directory) !== root || !path.basename(directory).startsWith("media-")) return;
+  try { fs.rmSync(directory, { recursive: true, force: true }); } catch { /* Startup staging cleanup can retry after an interrupted request. */ }
+}
+
+const upload = multer({
+  storage: new MediaDiskStorage(),
+  limits: {
+    files: mediaUploadLimits.files,
+    fileSize: mediaUploadLimits.fileBytes,
+    fields: mediaUploadLimits.fields,
+    fieldSize: mediaUploadLimits.fieldBytes,
+    parts: mediaUploadLimits.parts
+  }
+});
+const parseMediaUpload = upload.array("files", mediaUploadLimits.files);
+
+function mediaUploadMiddleware(req: Request, res: Response, next: NextFunction) {
+  const contentLength = Number(req.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > mediaUploadLimits.requestBytes) return next(new RequestTooLargeError());
+  parseMediaUpload(req, res, (error) => {
+    if (error) cleanupMediaUpload(req);
+    next(error);
+  });
+}
+
+const uploadAlbumId = z.preprocess(
+  (value) => value === undefined || value === null || value === "" ? null : value,
+  z.coerce.number().int().positive().nullable()
+);
+const uploadMetadataSchema = z.object({
+  displayName: z.string().max(160).default(""),
+  caption: z.string().max(1000).default(""),
+  takenDate: nullableDate,
+  filterPreset: z.enum(imageFilterPresets).default("original")
+});
+
+api.post("/admin/media", requireAdmin, mediaUploadMiddleware, async (req, res) => {
   try {
-    const ids = [];
-    for (const [index, file] of files.entries()) {
-      ids.push(await persistUpload(file, albumId, {
+    const files = (req.files || []) as Express.Multer.File[];
+    if (!files.length) return res.status(400).json({ error: "请选择文件" });
+    const parsedAlbumId = uploadAlbumId.safeParse(req.body.albumId);
+    if (!parsedAlbumId.success) return res.status(400).json({ error: "相册信息格式不正确" });
+    const fieldAt = (key: string, index: number) => {
+      const value = req.body[key];
+      return Array.isArray(value) ? value[index] : index === 0 ? value : undefined;
+    };
+    const metadata: Array<z.infer<typeof uploadMetadataSchema>> = [];
+    for (const index of files.keys()) {
+      const parsedMetadata = uploadMetadataSchema.safeParse({
         displayName: fieldAt("displayNames", index),
         caption: fieldAt("captions", index),
-        takenDate: fieldAt("takenDates", index) || null,
-        filterPreset: filterAt(index)
-      }));
+        takenDate: fieldAt("takenDates", index),
+        filterPreset: fieldAt("filterPresets", index)
+      });
+      if (!parsedMetadata.success) {
+        return res.status(400).json({ error: parsedMetadata.error.issues[0]?.message || "媒体信息格式不正确" });
+      }
+      metadata.push(parsedMetadata.data);
     }
+    const ids = await persistUploads(files, parsedAlbumId.data, metadata);
     const rows = ids.map((id) => camelizeRow(db.prepare("SELECT * FROM media WHERE id = ?").get(id)));
-    res.status(201).json(rows);
+    return res.status(201).json(rows);
   } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : "上传失败" });
+    return res.status(400).json({ error: error instanceof Error ? error.message : "上传失败" });
+  } finally {
+    cleanupMediaUpload(req);
   }
 });
 
@@ -396,4 +621,44 @@ api.delete("/admin/media/:id", requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
-api.get("/health", (_req, res) => res.json({ ok: true }));
+function directoryIsWritable(directory: string) {
+  const probe = path.join(directory, `.health-${crypto.randomUUID()}`);
+  let descriptor: number | undefined;
+  try {
+    descriptor = fs.openSync(probe, "wx", 0o600);
+    fs.closeSync(descriptor);
+    descriptor = undefined;
+    fs.rmSync(probe, { force: true });
+    return true;
+  } catch {
+    if (descriptor !== undefined) {
+      try { fs.closeSync(descriptor); } catch { /* Preserve the health failure. */ }
+    }
+    try { fs.rmSync(probe, { force: true }); } catch { /* The response must not expose filesystem details. */ }
+    return false;
+  }
+}
+
+export function serviceIsHealthy() {
+  let transactionStarted = false;
+  try {
+    db.prepare("SELECT 1 AS ok").get();
+    db.exec("BEGIN IMMEDIATE");
+    transactionStarted = true;
+    db.prepare("UPDATE settings SET id = id WHERE id = 1").run();
+    db.exec("ROLLBACK");
+    transactionStarted = false;
+    return directoryIsWritable(config.uploadDir) && directoryIsWritable(config.backupStagingDir);
+  } catch {
+    if (transactionStarted) {
+      try { db.exec("ROLLBACK"); } catch { /* Keep the service unhealthy if the write probe cannot be rolled back. */ }
+    }
+    return false;
+  }
+}
+
+api.get("/health", (_req, res) => {
+  const ok = serviceIsHealthy();
+  res.setHeader("Cache-Control", "no-store");
+  res.status(ok ? 200 : 503).json({ ok });
+});

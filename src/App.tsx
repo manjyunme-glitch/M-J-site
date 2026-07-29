@@ -6,11 +6,13 @@ import { BookOpen, CalendarDays, ChevronDown, ChevronRight, Eye, EyeOff, Heart, 
 import ReactMarkdown from "react-markdown";
 import { Link, Navigate, NavLink, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { api, jsonBody } from "./api";
+import { addDays, calendarDuration, daysBetween, isValidDateOnly, nextAnnualOccurrence, shanghaiDate } from "./date-utils";
+import { fisherYatesShuffle } from "./random-utils";
 import type { Album, Anniversary, Content, HomepageCoreType, HomepageModule, Letter, MusicTrack, PlaybackMode } from "./types";
 
 gsap.registerPlugin(ScrollTrigger, useGSAP);
 
-type AuthState = "checking" | "locked" | "open";
+type AuthState = "checking" | "locked" | "open" | "error";
 
 const navigation = [
   { to: "/", label: "首页", icon: Home, end: true },
@@ -20,41 +22,77 @@ const navigation = [
   { to: "/wishes", label: "愿望", icon: ListChecks }
 ] as const;
 
-function shanghaiDate() {
-  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
-  const get = (type: string) => parts.find((part) => part.type === type)?.value || "";
-  return `${get("year")}-${get("month")}-${get("day")}`;
+const dialogFocusableSelector = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "[tabindex]:not([tabindex='-1'])"
+].join(",");
+
+function useDialogAccessibility<T extends HTMLElement>(open: boolean, onClose: () => void) {
+  const root = useRef<T>(null);
+  const closeRef = useRef(onClose);
+  const previousFocus = useRef<HTMLElement | null>(null);
+  closeRef.current = onClose;
+
+  useEffect(() => {
+    if (!open || !root.current) return;
+    const element = root.current;
+    previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const frame = window.requestAnimationFrame(() => {
+      const initial = element.querySelector<HTMLElement>("[data-dialog-initial-focus]")
+        || element.querySelector<HTMLElement>(dialogFocusableSelector)
+        || element;
+      initial.focus({ preventScroll: true });
+    });
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeRef.current();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(element.querySelectorAll<HTMLElement>(dialogFocusableSelector))
+        .filter((item) => item.getClientRects().length > 0);
+      if (!focusable.length) {
+        event.preventDefault();
+        element.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", onKeyDown);
+      if (previousFocus.current?.isConnected) previousFocus.current.focus({ preventScroll: true });
+    };
+  }, [open]);
+
+  return root;
 }
 
-function daysBetween(start: string, end: string) {
-  return Math.max(0, Math.floor((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86400000));
-}
-
-function calendarDuration(start: string, end: string) {
-  const [sy, sm, sd] = start.split("-").map(Number);
-  const [ey, em, ed] = end.split("-").map(Number);
-  let years = ey - sy;
-  let months = em - sm;
-  let days = ed - sd;
-  if (days < 0) {
-    months -= 1;
-    days += new Date(Date.UTC(ey, em - 1, 0)).getUTCDate();
+function ResilientImage({ src, alt, className = "" }: { src: string; alt: string; className?: string }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [src]);
+  if (failed) {
+    return <div className={`media-load-error ${className}`} role="img" aria-label={`${alt}加载失败`}><Images size={22} /><span>照片暂时无法加载</span></div>;
   }
-  if (months < 0) {
-    years -= 1;
-    months += 12;
-  }
-  return { years: Math.max(0, years), months: Math.max(0, months), days: Math.max(0, days) };
-}
-
-function addDays(date: string, days: number) {
-  const parsed = Date.parse(`${date}T00:00:00Z`);
-  if (Number.isNaN(parsed)) return "";
-  return new Date(parsed + days * 86400000).toISOString().slice(0, 10);
+  return <img className={className} src={src} alt={alt} loading="lazy" decoding="async" onError={() => setFailed(true)} />;
 }
 
 function sameMonthDay(date: string | null | undefined, today: string) {
-  return Boolean(date && date.length >= 10 && date.slice(5, 10) === today.slice(5, 10));
+  return Boolean(date && nextAnnualOccurrence(date, today) === today);
 }
 
 function yearsSince(date: string, today: string) {
@@ -153,18 +191,20 @@ function getSpecialSurprise(content: Content, today = shanghaiDate()): SpecialSu
 
 function nextAnniversary(items: Anniversary[]) {
   const today = shanghaiDate();
-  const [year] = today.split("-").map(Number);
   return items.flatMap((item) => {
-    if (!item.enabled || item.title.includes("生日")) return [];
-    const suffix = item.eventDate.slice(4);
-    let date = item.annual ? `${year}${suffix}` : item.eventDate;
-    if (item.annual && date < today) date = `${year + 1}${suffix}`;
+    if (!item.enabled) return [];
+    const date = item.annual
+      ? nextAnnualOccurrence(item.eventDate, today)
+      : isValidDateOnly(item.eventDate)
+        ? item.eventDate
+        : null;
+    if (!date) return [];
     if (date < today) return [];
     return [{ ...item, nextDate: date, remaining: daysBetween(today, date) }];
   }).sort((a, b) => a.nextDate.localeCompare(b.nextDate))[0];
 }
 
-function LoginCover({ onOpen }: { onOpen: () => void }) {
+function LoginCover({ onOpen }: { onOpen: () => Promise<void> }) {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
@@ -175,7 +215,7 @@ function LoginCover({ onOpen }: { onOpen: () => void }) {
     setError("");
     try {
       await api("/api/auth/site", { method: "POST", body: jsonBody({ password }) });
-      onOpen();
+      await onOpen();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "解锁失败");
     } finally {
@@ -289,25 +329,28 @@ function QuestionDraw({ config }: { config: QuestionDrawConfig }) {
 }
 
 function shuffleLabels(labels: string[]) {
-  return labels.flatMap((label, pair) => [{ label, key: `${pair}-a` }, { label, key: `${pair}-b` }]).sort(() => Math.random() - .5);
+  return fisherYatesShuffle(labels.flatMap((label, pairId) => [
+    { label, pairId, key: `${pairId}-a` },
+    { label, pairId, key: `${pairId}-b` }
+  ]));
 }
 
 function MemoryMatch({ config }: { config: MemoryMatchConfig }) {
   const [cards, setCards] = useState(() => shuffleLabels(config.pairs));
   const [open, setOpen] = useState<number[]>([]);
-  const [matched, setMatched] = useState<string[]>([]);
+  const [matched, setMatched] = useState<number[]>([]);
   useEffect(() => { setCards(shuffleLabels(config.pairs)); setOpen([]); setMatched([]); }, [config.pairs.join("|")]);
   const choose = (index: number) => {
-    if (open.includes(index) || matched.includes(cards[index].label) || open.length >= 2) return;
+    if (open.includes(index) || matched.includes(cards[index].pairId) || open.length >= 2) return;
     const next = [...open, index];
     setOpen(next);
     if (next.length === 2) {
-      if (cards[next[0]].label === cards[next[1]].label) { setMatched((current) => [...current, cards[next[0]].label]); setOpen([]); }
+      if (cards[next[0]].pairId === cards[next[1]].pairId) { setMatched((current) => [...current, cards[next[0]].pairId]); setOpen([]); }
       else window.setTimeout(() => setOpen([]), 650);
     }
   };
   const reset = () => { setCards(shuffleLabels(config.pairs)); setOpen([]); setMatched([]); };
-  return <section className="playful-module memory-match scrapbook-section" data-reveal><PlayfulHeading eyebrow={config.eyebrow} title={config.title} description={config.description} /><div className="memory-board">{cards.map((card, index) => { const visible = open.includes(index) || matched.includes(card.label); return <button type="button" key={card.key} className={visible ? "is-visible" : ""} onClick={() => choose(index)} aria-label={visible ? card.label : `翻开第 ${index + 1} 张记忆卡`} disabled={matched.includes(card.label)}><span>{visible ? card.label : String(index + 1).padStart(2, "0")}</span></button>; })}</div><div className="game-status" aria-live="polite"><span>{matched.length === config.pairs.length ? "所有记忆都配成了一对。" : `已经找到 ${matched.length} / ${config.pairs.length} 对`}</span><button type="button" onClick={reset} aria-label="重新开始记忆配对"><RefreshCw size={16} /></button></div></section>;
+  return <section className="playful-module memory-match scrapbook-section" data-reveal><PlayfulHeading eyebrow={config.eyebrow} title={config.title} description={config.description} /><div className="memory-board">{cards.map((card, index) => { const visible = open.includes(index) || matched.includes(card.pairId); return <button type="button" key={card.key} className={visible ? "is-visible" : ""} onClick={() => choose(index)} aria-label={visible ? card.label : `翻开第 ${index + 1} 张记忆卡`} disabled={matched.includes(card.pairId)}><span>{visible ? card.label : String(index + 1).padStart(2, "0")}</span></button>; })}</div><div className="game-status" aria-live="polite"><span>{matched.length === config.pairs.length ? "所有记忆都配成了一对。" : `已经找到 ${matched.length} / ${config.pairs.length} 对`}</span><button type="button" onClick={reset} aria-label="重新开始记忆配对"><RefreshCw size={16} /></button></div></section>;
 }
 
 function AnniversaryDraw({ config }: { config: AnniversaryDrawConfig }) {
@@ -326,11 +369,15 @@ function mediaAspectClass(width?: number | null, height?: number | null) {
   return "aspect-square";
 }
 
-function Polaroid({ src, alt, index, width, height, onOpen }: { src?: string | null; alt: string; index: number; width?: number | null; height?: number | null; onOpen?: () => void }) {
+function Polaroid({ src, alt, index, width, height, onOpen, priority = false }: { src?: string | null; alt: string; index: number; width?: number | null; height?: number | null; onOpen?: () => void; priority?: boolean }) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [src]);
   const figure = (
     <figure className={`polaroid rotate-${index % 3} ${mediaAspectClass(width, height)}`}>
       <span className="polaroid-media">
-        {src ? <img src={src} alt={alt} width={width || undefined} height={height || undefined} /> : <span className={`drawn-placeholder scene-${index % 6}`} aria-label={`${alt}的插画占位`}><i /></span>}
+        {src && !failed
+          ? <img src={src} alt={alt} width={width || undefined} height={height || undefined} loading={priority ? "eager" : "lazy"} decoding={priority ? "auto" : "async"} onError={() => setFailed(true)} />
+          : <span className={`drawn-placeholder scene-${index % 6}`} role="img" aria-label={src ? `${alt}加载失败` : `${alt}的插画占位`}><i />{src && <small>照片暂时无法加载</small>}</span>}
       </span>
       <figcaption>{alt}</figcaption>
     </figure>
@@ -352,6 +399,7 @@ function MusicPlayer({ tracks, defaultMode }: { tracks: MusicTrack[]; defaultMod
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [playbackError, setPlaybackError] = useState("");
   const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem("mj-music-collapsed") === "true");
   const [mode, setMode] = useState<PlaybackMode>(() => {
     const saved = window.localStorage.getItem("mj-music-mode") as PlaybackMode | null;
@@ -376,10 +424,14 @@ function MusicPlayer({ tracks, defaultMode }: { tracks: MusicTrack[]; defaultMod
     if (!audio || !track) return;
     setCurrentTime(0);
     setDuration(0);
+    setPlaybackError("");
     audio.load();
     if (pendingPlayRef.current) {
       pendingPlayRef.current = false;
-      void audio.play().catch(() => setPlaying(false));
+      void audio.play().catch(() => {
+        setPlaying(false);
+        setPlaybackError("这首音乐暂时无法播放。");
+      });
     }
   }, [track?.id]);
 
@@ -390,6 +442,7 @@ function MusicPlayer({ tracks, defaultMode }: { tracks: MusicTrack[]; defaultMod
         await audioRef.current.play();
       } catch {
         setPlaying(false);
+        setPlaybackError("浏览器未能开始播放这首音乐。");
       }
     } else {
       audioRef.current.pause();
@@ -402,7 +455,12 @@ function MusicPlayer({ tracks, defaultMode }: { tracks: MusicTrack[]; defaultMod
     if (normalizedIndex === currentIndex) {
       if (audioRef.current) {
         audioRef.current.currentTime = 0;
-        if (autoplay) void audioRef.current.play().catch(() => setPlaying(false));
+        if (autoplay) {
+          void audioRef.current.play().catch(() => {
+            setPlaying(false);
+            setPlaybackError("这首音乐暂时无法播放。");
+          });
+        }
       }
       return;
     }
@@ -432,7 +490,10 @@ function MusicPlayer({ tracks, defaultMode }: { tracks: MusicTrack[]; defaultMod
   const handleEnded = () => {
     if (mode === "repeat-one" && audioRef.current) {
       audioRef.current.currentTime = 0;
-      void audioRef.current.play();
+      void audioRef.current.play().catch(() => {
+        setPlaying(false);
+        setPlaybackError("这首音乐暂时无法继续播放。");
+      });
       return;
     }
     nextTrack(true);
@@ -477,10 +538,20 @@ function MusicPlayer({ tracks, defaultMode }: { tracks: MusicTrack[]; defaultMod
   if (!track) return null;
   return (
     <div className={collapsed ? "music-drawer is-collapsed" : "music-drawer"} onPointerDown={(event) => { pointerStartRef.current = event.clientX; }} onPointerUp={(event) => { if (pointerStartRef.current === null) return; const delta = event.clientX - pointerStartRef.current; pointerStartRef.current = null; if (!collapsed && delta > 46) setCollapsed(true); if (collapsed && delta < -28) setCollapsed(false); }}>
-      <audio ref={audioRef} src={track.url} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={handleEnded} onLoadedMetadata={(event) => setDuration(event.currentTarget.duration || 0)} onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)} />
+      <audio
+        ref={audioRef}
+        src={track.url}
+        onPlay={() => { setPlaying(true); setPlaybackError(""); }}
+        onPause={() => setPlaying(false)}
+        onEnded={handleEnded}
+        onError={() => { setPlaying(false); setPlaybackError("这首音乐加载失败，可以跳到下一首。"); }}
+        onLoadedMetadata={(event) => setDuration(event.currentTarget.duration || 0)}
+        onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+      />
       {collapsed ? <button type="button" className="music-pull-tab" onClick={() => setCollapsed(false)} aria-label="展开音乐播放器"><Music2 size={18} /><span>{playing ? "正在播放" : "音乐"}</span></button> : <section className="music-player" data-playing={playing} aria-label="主页音乐播放器">
         <button type="button" className="music-collapse" onClick={() => setCollapsed(true)} aria-label="收起音乐播放器" title="向右滑动也可收起"><ChevronRight size={17} /></button>
         <div className="music-heading"><div className="music-meta"><small>OUR SOUNDTRACK · {String(currentIndex + 1).padStart(2, "0")}/{String(tracks.length).padStart(2, "0")}</small><strong>{track.title}</strong><span>{track.artist}</span></div><span className={playing ? "sound-wave is-playing" : "sound-wave"}><i /><i /><i /><i /></span></div>
+        {playbackError && <div className="music-error" role="alert"><span>{playbackError}</span><button type="button" onClick={() => { setPlaybackError(""); nextTrack(true); }}>下一首</button></div>}
         <div className="music-progress"><input type="range" min="0" max={duration || 0} step="0.1" value={Math.min(currentTime, duration || 0)} onChange={(event) => { if (audioRef.current) audioRef.current.currentTime = Number(event.target.value); }} aria-label="播放进度" /><div><time>{formatTime(currentTime)}</time><time>{formatTime(duration)}</time></div></div>
         <div className="music-controls"><button type="button" onClick={previousTrack} aria-label="上一首"><SkipBack /></button><button type="button" className="music-play" onClick={toggle} aria-label={playing ? "暂停音乐" : "播放音乐"} aria-pressed={playing}>{playing ? <Pause /> : <Play />}</button><button type="button" onClick={() => nextTrack(playing)} aria-label="下一首"><SkipForward /></button><button type="button" className="music-mode" onClick={cycleMode} aria-label={`当前${activeMode.label}，点击切换`} title={activeMode.label}><ModeIcon /><span>{activeMode.label}</span></button></div>
         <small className="music-gesture-hint">向右滑动收起</small>
@@ -490,10 +561,10 @@ function MusicPlayer({ tracks, defaultMode }: { tracks: MusicTrack[]; defaultMod
 }
 
 function SpecialDaySurprise({ content }: { content: Content }) {
-  const root = useRef<HTMLDivElement>(null);
   const surprise = useMemo(() => getSpecialSurprise(content), [content]);
   const [active, setActive] = useState<SpecialSurprise | null>(null);
   const [hasOpened, setHasOpened] = useState(false);
+  const root = useDialogAccessibility<HTMLDivElement>(Boolean(active), () => setActive(null));
 
   useEffect(() => {
     if (!surprise) {
@@ -508,15 +579,6 @@ function SpecialDaySurprise({ content }: { content: Content }) {
     }, 420);
     return () => window.clearTimeout(timer);
   }, [surprise?.id]);
-
-  useEffect(() => {
-    if (!active) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setActive(null);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [active]);
 
   useGSAP(() => {
     if (!active || !root.current) return;
@@ -534,12 +596,12 @@ function SpecialDaySurprise({ content }: { content: Content }) {
   const floaters = ["520", "100", "M", "J", "LOVE", "3·14", "♡", "✦", "520", "♡", "M", "J", "100", "✦", "LOVE", "♡"];
   return (
     <>
-      {active && <div ref={root} className={`surprise-backdrop accent-${active.accent}`} role="dialog" aria-modal="true" aria-labelledby="surprise-title" onClick={() => setActive(null)}>
+      {active && <div ref={root} className={`surprise-backdrop accent-${active.accent}`} tabIndex={-1} onClick={() => setActive(null)}>
         <div className="surprise-fall" aria-hidden="true">
           {floaters.map((label, index) => <span className="surprise-float" key={`${label}-${index}`} style={{ left: `${6 + (index * 83) % 88}%`, animationDelay: `${index * .13}s` }}>{label}</span>)}
         </div>
-        <section className="surprise-card" onClick={(event) => event.stopPropagation()}>
-          <button type="button" className="surprise-close" aria-label="收起惊喜" onClick={() => setActive(null)}><X size={18} /></button>
+        <section className="surprise-card" role="dialog" aria-modal="true" aria-labelledby="surprise-title" onClick={(event) => event.stopPropagation()}>
+          <button type="button" className="surprise-close" aria-label="收起惊喜" data-dialog-initial-focus onClick={() => setActive(null)}><X size={18} /></button>
           <span className="tape tape-red" />
           <div className="surprise-date">{active.dateLabel}</div>
           <div className="surprise-mark"><Heart /><span>M × J</span></div>
@@ -647,6 +709,7 @@ function HomePage({ content }: { content: Content }) {
       <div className="hero-copy" data-page-intro>
         <span className="eyebrow">{home.heroEyebrow}</span>
         {home.heroTitle ? <h1>{home.heroTitle}</h1> : <h1>{settings.manName}<span>{home.heroJoiner}</span>{settings.womanName}</h1>}
+        {settings.subtitle && settings.subtitle !== home.heroSubtitle && <p className="site-subtitle">{settings.subtitle}</p>}
         <p className="hero-subtitle">{home.heroSubtitle}</p>
         <div className="hero-stats">
           <div><b>{knownDays}</b><span>相识的日子</span></div>
@@ -656,7 +719,7 @@ function HomePage({ content }: { content: Content }) {
         <Link className="paper-button" to={home.heroCtaTarget}>{home.heroCtaLabel} <ChevronDown size={18} /></Link>
       </div>
       <div className="hero-collage" data-page-art>
-        <Polaroid src={heroUrl} alt={home.heroMediaCaption} index={1} width={heroWidth} height={heroHeight} />
+        <Polaroid src={heroUrl} alt={home.heroMediaCaption} index={1} width={heroWidth} height={heroHeight} priority />
         <div className="date-stamp">SINCE<br /><b>{settings.togetherDate.replaceAll("-", ".")}</b></div>
         <span className="doodle-heart"><Heart /></span>
       </div>
@@ -703,10 +766,11 @@ function HomePage({ content }: { content: Content }) {
 }
 
 function StoriesPage({ content, openLightbox }: { content: Content; openLightbox: (src: string) => void }) {
+  const hasStories = content.timeline.length > 0;
   return (
     <AnimatedPage>
-      <PageHeading eyebrow={`CHAPTERS 01—${String(content.timeline.length).padStart(2, "0")}`} title="我们的故事，慢慢写" description={content.settings.heroNote} />
-      <section className="story scrapbook-section">
+      <PageHeading eyebrow={hasStories ? `CHAPTERS 01—${String(content.timeline.length).padStart(2, "0")}` : "CHAPTERS · 00"} title="我们的故事，慢慢写" description={content.settings.heroNote} />
+      <section className={`story scrapbook-section ${hasStories ? "" : "is-empty"}`}>
         <div className="timeline">
           {content.timeline.map((event, index) => (
             <article key={event.id} className={`timeline-entry ${index % 2 ? "right" : "left"}`} data-reveal>
@@ -715,6 +779,7 @@ function StoriesPage({ content, openLightbox }: { content: Content; openLightbox
               <div className="timeline-copy"><time>{event.dateLabel}</time><h3>{event.title}</h3><p>{event.body}</p></div>
             </article>
           ))}
+          {!hasStories && <div className="empty-public">故事页还在等待第一段回忆。</div>}
         </div>
       </section>
     </AnimatedPage>
@@ -723,14 +788,14 @@ function StoriesPage({ content, openLightbox }: { content: Content; openLightbox
 
 function AlbumCover({ album }: { album: Album }) {
   const cover = album.coverUrl || album.media[0]?.thumbUrl;
-  return <Link className="album-index-card" to={`/gallery/${album.id}`} data-reveal>{cover ? <img src={cover} alt={album.title} /> : <div className="drawn-placeholder scene-2"><span /></div>}<div><small>{album.eventDate?.replaceAll("-", ".") || `${album.media.length} PHOTOS`}</small><h2>{album.title}</h2><p>{album.description}</p><span>打开这本相册 →</span></div></Link>;
+  return <Link className="album-index-card" to={`/gallery/${album.id}`} data-reveal>{cover ? <ResilientImage src={cover} alt={album.title} /> : <div className="drawn-placeholder scene-2"><span /></div>}<div><small>{album.eventDate?.replaceAll("-", ".") || `${album.media.length} PHOTOS`}</small><h2>{album.title}</h2><p>{album.description}</p><span>打开这本相册 →</span></div></Link>;
 }
 
 function GalleryPage({ content }: { content: Content }) {
   return (
     <AnimatedPage>
       <PageHeading eyebrow={`PHOTO POCKETS · ${content.albums.length} ALBUMS`} title="把平常的日子留下来" description="照片按相册与日期归档，每一本都有自己的页面。" />
-      <section className="album-index scrapbook-section" data-stagger>{content.albums.map((album) => <AlbumCover key={album.id} album={album} />)}</section>
+      <section className="album-index scrapbook-section" data-stagger>{content.albums.map((album) => <AlbumCover key={album.id} album={album} />)}{!content.albums.length && <div className="empty-public">还没有相册，照片会在这里按册收藏。</div>}</section>
     </AnimatedPage>
   );
 }
@@ -746,8 +811,8 @@ function AlbumPage({ content, openLightbox }: { content: Content; openLightbox: 
         <div className="album-photo-grid" data-stagger>
           {album.media.map((item, index) => {
             const src = item.url || item.thumbUrl;
-            const alt = item.displayName || item.caption || item.originalName;
-            return <article key={item.id}><Polaroid src={src} alt={alt} index={index} width={item.imageWidth} height={item.imageHeight} onOpen={item.url ? () => openLightbox(item.url!) : undefined} />{item.takenDate && <time>{item.takenDate.replaceAll("-", ".")}</time>}</article>;
+            const displayName = item.displayName || item.originalName;
+            return <article key={item.id}><Polaroid src={src} alt={displayName} index={index} width={item.imageWidth} height={item.imageHeight} onOpen={item.url ? () => openLightbox(item.url!) : undefined} />{item.takenDate && <time>{item.takenDate.replaceAll("-", ".")}</time>}{item.caption && <p className="album-photo-caption">{item.caption}</p>}</article>;
           })}
         </div>
         {!album.media.length && <div className="empty-public">这本相册还在等待第一张照片。</div>}
@@ -766,6 +831,7 @@ function LettersPage({ content }: { content: Content }) {
       <PageHeading eyebrow={`PRIVATE LETTERS · ${content.letters.length}`} title="写给彼此的话" description="每一封信单独收藏，想读的时候再慢慢拆开。" />
       <section className="letter-index scrapbook-section" data-stagger>
         {content.letters.map((letter, index) => <Link to={`/letters/${letter.id}`} className="letter-index-card" key={letter.id}><div className="letter-mini-envelope"><span>{String(index + 1).padStart(2, "0")}</span><i /></div><div><small>PRIVATE LETTER</small><h2>{letter.title}</h2><p>{letterExcerpt(letter)}</p><span>拆开这封信 →</span></div></Link>)}
+        {!content.letters.length && <div className="empty-public">还没有公开的情书，写下的话会收藏在这里。</div>}
       </section>
     </AnimatedPage>
   );
@@ -778,7 +844,7 @@ function LetterPage({ content }: { content: Content }) {
   return (
     <AnimatedPage>
       <header className="page-heading scrapbook-section compact-heading" data-page-intro><small><Link to="/letters">情书</Link> / PRIVATE LETTER</small><h1>{letter.title}</h1><p>TO: {content.settings.womanName} · FROM: {content.settings.manName}</p></header>
-      <section className="letter-reading scrapbook-section" data-reveal><article className="letter-paper"><span className="tape tape-red" /><ReactMarkdown>{letter.body}</ReactMarkdown><footer>ManJyun</footer></article></section>
+      <section className="letter-reading scrapbook-section" data-reveal><article className="letter-paper"><span className="tape tape-red" /><ReactMarkdown>{letter.body}</ReactMarkdown><footer>{content.settings.manName}</footer></article></section>
     </AnimatedPage>
   );
 }
@@ -787,13 +853,33 @@ function WishesPage({ content }: { content: Content }) {
   return (
     <AnimatedPage>
       <PageHeading eyebrow="TO BE CONTINUED" title="还想和你一起完成" description="愿望不是任务清单，是未来可以一起期待的页面。" />
-      <section className="wish-section scrapbook-section"><div className="wish-grid" data-stagger>{content.wishes.map((wish, index) => <article className={wish.status === "completed" ? "wish-card completed" : "wish-card"} key={wish.id}><span>{String(index + 1).padStart(2, "0")}</span><Heart size={20} /><h3>{wish.title}</h3><p>{wish.description}</p><small>{wish.status === "completed" ? `完成于 ${wish.completedDate || "某个好日子"}` : wish.targetDate ? `期待在 ${wish.targetDate}` : "等待一起出发"}</small></article>)}</div></section>
+      <section className="wish-section scrapbook-section"><div className="wish-grid" data-stagger>{content.wishes.map((wish, index) => <article className={wish.status === "completed" ? "wish-card completed" : "wish-card"} key={wish.id}>{wish.imageUrl && <ResilientImage className="wish-image" src={wish.imageUrl} alt={wish.title} />}<span>{String(index + 1).padStart(2, "0")}</span><Heart size={20} /><h3>{wish.title}</h3><p>{wish.description}</p><small>{wish.status === "completed" ? `完成于 ${wish.completedDate || "某个好日子"}` : wish.targetDate ? `期待在 ${wish.targetDate}` : "等待一起出发"}</small></article>)}{!content.wishes.length && <div className="empty-public">愿望清单还是空白，未来的约定会出现在这里。</div>}</div></section>
     </AnimatedPage>
+  );
+}
+
+function Lightbox({ src, onClose }: { src: string; onClose: () => void }) {
+  const [failed, setFailed] = useState(false);
+  const root = useDialogAccessibility<HTMLDivElement>(true, onClose);
+  return (
+    <div ref={root} className="lightbox" role="dialog" aria-modal="true" aria-label="照片大图预览" tabIndex={-1} onClick={onClose}>
+      <button type="button" data-dialog-initial-focus aria-label="关闭照片大图" onClick={onClose}><X /></button>
+      <div className="lightbox-content" onClick={(event) => event.stopPropagation()}>
+        {failed
+          ? <div className="media-load-error lightbox-error" role="img" aria-label="相册大图加载失败"><Images size={28} /><span>大图暂时无法加载</span></div>
+          : <img src={src.replace("variant=thumb", "variant=web")} alt="相册大图" decoding="async" onError={() => setFailed(true)} />}
+      </div>
+    </div>
   );
 }
 
 function Journal({ content }: { content: Content }) {
   const [lightbox, setLightbox] = useState<string | null>(null);
+  useEffect(() => {
+    const previousTitle = document.title;
+    document.title = content.settings.siteTitle;
+    return () => { document.title = previousTitle; };
+  }, [content.settings.siteTitle]);
   useLayoutEffect(() => {
     document.documentElement.classList.add("journal-viewport-locked");
     return () => document.documentElement.classList.remove("journal-viewport-locked");
@@ -815,7 +901,7 @@ function Journal({ content }: { content: Content }) {
       </div>
       <MusicPlayer tracks={content.settings.musicPlaylist} defaultMode={content.settings.musicMode} />
       <SpecialDaySurprise content={content} />
-      {lightbox && <div className="lightbox" role="dialog" aria-modal="true" onClick={() => setLightbox(null)}><button aria-label="关闭"><X /></button><img src={lightbox.replace("variant=thumb", "variant=web")} alt="相册大图" onClick={(event) => event.stopPropagation()} /></div>}
+      {lightbox && <Lightbox src={lightbox} onClose={() => setLightbox(null)} />}
     </div>
   );
 }
@@ -826,20 +912,29 @@ export function App() {
   const [error, setError] = useState("");
 
   const load = async () => {
+    setAuth("checking");
+    setError("");
     try {
       const status = await api<{ site: boolean }>("/api/auth/status");
-      if (!status.site) return setAuth("locked");
-      setContent(await api<Content>("/api/content"));
+      if (!status.site) {
+        setContent(null);
+        setAuth("locked");
+        return;
+      }
+      const nextContent = await api<Content>("/api/content");
+      setContent(nextContent);
       setAuth("open");
     } catch (caught) {
+      setContent(null);
       setError(caught instanceof Error ? caught.message : "加载失败");
-      setAuth("locked");
+      setAuth("error");
     }
   };
   useEffect(() => { void load(); }, []);
 
   if (auth === "checking") return <div className="loading-page"><Heart /><span>正在翻开纪念册</span></div>;
-  if (auth === "locked") return <LoginCover onOpen={() => void load()} />;
-  if (!content) return <div className="loading-page"><p>{error || "暂时无法读取故事"}</p></div>;
+  if (auth === "error") return <div className="loading-page" role="alert"><p>{error || "暂时无法读取故事"}</p><button type="button" className="paper-button" onClick={() => void load()}><RefreshCw size={17} /> 重试</button></div>;
+  if (auth === "locked") return <LoginCover onOpen={load} />;
+  if (!content) return <div className="loading-page"><p>暂时无法读取故事</p><button type="button" className="paper-button" onClick={() => void load()}><RefreshCw size={17} /> 重试</button></div>;
   return <Journal content={content} />;
 }

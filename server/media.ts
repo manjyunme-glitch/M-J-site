@@ -11,12 +11,16 @@ const audioMimes = new Set(["audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/ogg
 export const imageFilterPresets = ["original", "warm-pencil", "faded-book", "blue-diary", "soft-film"] as const;
 export type ImageFilterPreset = typeof imageFilterPresets[number];
 
-type UploadMetadata = {
+export type UploadMetadata = {
   displayName?: string;
   caption?: string;
   takenDate?: string | null;
   filterPreset?: ImageFilterPreset;
 };
+
+type ValidatedUpload =
+  | { kind: "image"; dimensions: { width: number | null; height: number | null } }
+  | { kind: "audio" };
 
 const warmMatrix = [
   [0.9, 0.08, 0.02],
@@ -30,7 +34,20 @@ const coolMatrix = [
   [0.04, 0.18, 0.9]
 ];
 
-async function filteredImage(input: Buffer, preset: ImageFilterPreset, resize: Parameters<ReturnType<typeof sharp>["resize"]>[0]) {
+type UploadSource = Buffer | string;
+
+function uploadSource(file: Express.Multer.File): UploadSource {
+  if (typeof file.path === "string" && file.path && fs.existsSync(file.path)) return file.path;
+  if (Buffer.isBuffer(file.buffer)) return file.buffer;
+  throw new Error("上传暂存文件不存在");
+}
+
+function copyUploadSource(source: UploadSource, target: string) {
+  if (typeof source === "string") fs.copyFileSync(source, target);
+  else fs.writeFileSync(target, source);
+}
+
+async function filteredImage(input: UploadSource, preset: ImageFilterPreset, resize: Parameters<ReturnType<typeof sharp>["resize"]>[0]) {
   const resized = await sharp(input).rotate().resize(resize).toBuffer();
   if (preset === "warm-pencil") {
     return sharp(resized)
@@ -51,7 +68,7 @@ async function filteredImage(input: Buffer, preset: ImageFilterPreset, resize: P
   return sharp(resized);
 }
 
-async function writeImageVariants(input: Buffer, webTarget: string, thumbTarget: string, preset: ImageFilterPreset) {
+async function writeImageVariants(input: UploadSource, webTarget: string, thumbTarget: string, preset: ImageFilterPreset) {
   const [web, thumb] = await Promise.all([
     filteredImage(input, preset, { width: 1800, height: 1800, fit: "inside", withoutEnlargement: true }),
     filteredImage(input, preset, { width: 560, height: 560, fit: "contain", background: { r: 245, g: 239, b: 223, alpha: 1 } })
@@ -69,39 +86,123 @@ function normalizedDimensions(metadata: { width?: number; height?: number; orien
   return { width, height };
 }
 
-export async function persistUpload(file: Express.Multer.File, albumId?: number | null, metadata: UploadMetadata = {}) {
-  const id = crypto.randomUUID();
-  const originalName = normalizeUploadFilename(file.originalname);
+export async function validateUpload(file: Express.Multer.File): Promise<ValidatedUpload> {
   if (imageMimes.has(file.mimetype)) {
     if (file.size > 15 * 1024 * 1024) throw new Error("单张图片不能超过 15MB");
+    const dimensions = normalizedDimensions(await sharp(uploadSource(file)).metadata());
+    return { kind: "image", dimensions };
+  }
+  if (audioMimes.has(file.mimetype)) {
+    if (file.size > 30 * 1024 * 1024) throw new Error("音乐文件不能超过 30MB");
+    return { kind: "audio" };
+  }
+  throw new Error("仅支持 JPEG、PNG、WebP、MP3、M4A 和 OGG 文件");
+}
+
+function cleanupStoredPaths(relativePaths: string[]) {
+  for (const relativePath of relativePaths) {
+    const target = path.resolve(config.uploadDir, relativePath);
+    if (!target.startsWith(config.uploadDir)) continue;
+    try { fs.rmSync(target, { force: true }); } catch { /* Preserve the original upload error. */ }
+  }
+}
+
+async function persistValidatedUpload(file: Express.Multer.File, validation: ValidatedUpload, albumId?: number | null, metadata: UploadMetadata = {}) {
+  const id = crypto.randomUUID();
+  const originalName = normalizeUploadFilename(file.originalname);
+  const source = uploadSource(file);
+  if (validation.kind === "image") {
     const originalExt = path.extname(originalName).toLowerCase() || ".jpg";
     const storedOriginalName = `${id}-original${originalExt}`;
     const webName = `${id}-web.webp`;
     const thumbName = `${id}-thumb.webp`;
     const filterPreset = metadata.filterPreset || "original";
-    const dimensions = normalizedDimensions(await sharp(file.buffer).metadata());
-    fs.writeFileSync(path.join(config.uploadDir, storedOriginalName), file.buffer);
-    await writeImageVariants(file.buffer, path.join(config.uploadDir, webName), path.join(config.uploadDir, thumbName), filterPreset);
-    const result = db.prepare(`
-      INSERT INTO media (album_id, kind, original_name, file_path, web_path, thumb_path, mime_type, display_name, caption, taken_date, image_width, image_height, filter_preset)
-      VALUES (?, 'image', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(albumId ?? null, originalName, storedOriginalName, webName, thumbName, file.mimetype, metadata.displayName || "", metadata.caption || "", metadata.takenDate || null, dimensions.width, dimensions.height, filterPreset);
-    return Number(result.lastInsertRowid);
+    const storedPaths = [storedOriginalName, webName, thumbName];
+    try {
+      copyUploadSource(source, path.join(config.uploadDir, storedOriginalName));
+      await writeImageVariants(source, path.join(config.uploadDir, webName), path.join(config.uploadDir, thumbName), filterPreset);
+      const result = db.prepare(`
+        INSERT INTO media (album_id, kind, original_name, file_path, web_path, thumb_path, mime_type, display_name, caption, taken_date, image_width, image_height, filter_preset)
+        VALUES (?, 'image', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        albumId ?? null,
+        originalName,
+        storedOriginalName,
+        webName,
+        thumbName,
+        file.mimetype,
+        metadata.displayName || "",
+        metadata.caption || "",
+        metadata.takenDate || null,
+        validation.dimensions.width,
+        validation.dimensions.height,
+        filterPreset
+      );
+      return Number(result.lastInsertRowid);
+    } catch (error) {
+      cleanupStoredPaths(storedPaths);
+      throw error;
+    }
   }
 
-  if (audioMimes.has(file.mimetype)) {
-    if (file.size > 30 * 1024 * 1024) throw new Error("音乐文件不能超过 30MB");
-    const extension = file.mimetype === "audio/ogg" ? ".ogg" : file.mimetype === "audio/mpeg" ? ".mp3" : ".m4a";
-    const storedName = `${id}${extension}`;
-    fs.writeFileSync(path.join(config.uploadDir, storedName), file.buffer);
+  const extension = file.mimetype === "audio/ogg" ? ".ogg" : file.mimetype === "audio/mpeg" ? ".mp3" : ".m4a";
+  const storedName = `${id}${extension}`;
+  try {
+    copyUploadSource(source, path.join(config.uploadDir, storedName));
     const result = db.prepare(`
       INSERT INTO media (album_id, kind, original_name, file_path, mime_type)
       VALUES (NULL, 'audio', ?, ?, ?)
     `).run(originalName, storedName, file.mimetype);
     return Number(result.lastInsertRowid);
+  } catch (error) {
+    cleanupStoredPaths([storedName]);
+    throw error;
+  }
+}
+
+export async function persistUpload(file: Express.Multer.File, albumId?: number | null, metadata: UploadMetadata = {}) {
+  return persistValidatedUpload(file, await validateUpload(file), albumId, metadata);
+}
+
+function rollbackPersistedUploads(ids: number[]) {
+  if (!ids.length) return;
+  const placeholders = ids.map(() => "?").join(",");
+  const rows = db.prepare(`SELECT file_path, web_path, thumb_path FROM media WHERE id IN (${placeholders})`).all(...ids) as Array<{
+    file_path: string;
+    web_path?: string;
+    thumb_path?: string;
+  }>;
+  try {
+    db.exec("BEGIN");
+    db.prepare(`UPDATE albums SET cover_media_id = NULL WHERE cover_media_id IN (${placeholders})`).run(...ids);
+    db.prepare(`DELETE FROM media WHERE id IN (${placeholders})`).run(...ids);
+    db.exec("COMMIT");
+  } catch {
+    try { db.exec("ROLLBACK"); } catch { /* The caller will preserve the original upload error. */ }
+    return;
+  }
+  cleanupStoredPaths(rows.flatMap((row) => [row.file_path, row.web_path, row.thumb_path].filter((value): value is string => Boolean(value))));
+}
+
+export async function persistUploads(files: Express.Multer.File[], albumId: number | null, metadata: UploadMetadata[]) {
+  if (albumId !== null) {
+    const album = db.prepare("SELECT id FROM albums WHERE id = ?").get(albumId);
+    if (!album) throw new Error("相册不存在");
   }
 
-  throw new Error("仅支持 JPEG、PNG、WebP、MP3、M4A 和 OGG 文件");
+  const validations: ValidatedUpload[] = [];
+  for (const file of files) validations.push(await validateUpload(file));
+
+  const ids: number[] = [];
+  try {
+    for (const [index, file] of files.entries()) {
+      ids.push(await persistValidatedUpload(file, validations[index], albumId, metadata[index]));
+    }
+    return ids;
+  } catch (error) {
+    rollbackPersistedUploads(ids);
+    throw error;
+  }
 }
 
 export async function updateImageFilter(id: number, preset: ImageFilterPreset) {
@@ -111,7 +212,7 @@ export async function updateImageFilter(id: number, preset: ImageFilterPreset) {
   const webTarget = path.resolve(config.uploadDir, row.web_path);
   const thumbTarget = path.resolve(config.uploadDir, row.thumb_path);
   if (![source, webTarget, thumbTarget].every((target) => target.startsWith(config.uploadDir)) || !fs.existsSync(source)) throw new Error("照片原始文件不存在");
-  await writeImageVariants(fs.readFileSync(source), webTarget, thumbTarget, preset);
+  await writeImageVariants(source, webTarget, thumbTarget, preset);
   db.prepare("UPDATE media SET filter_preset = ? WHERE id = ?").run(preset, id);
 }
 
@@ -138,7 +239,7 @@ export async function backfillMediaDimensions() {
           const presetRow = db.prepare("SELECT filter_preset AS filterPreset, web_path AS webPath FROM media WHERE id = ?").get(row.id) as { filterPreset?: ImageFilterPreset; webPath?: string };
           if (presetRow.webPath) {
             const webTarget = path.resolve(config.uploadDir, presetRow.webPath);
-            await writeImageVariants(fs.readFileSync(target), webTarget, thumbTarget, presetRow.filterPreset || "original");
+            await writeImageVariants(target, webTarget, thumbTarget, presetRow.filterPreset || "original");
           }
         }
       }
@@ -158,6 +259,57 @@ export function removeMediaFiles(id: number) {
     if (target.startsWith(config.uploadDir) && fs.existsSync(target)) fs.unlinkSync(target);
   }
   db.prepare("UPDATE albums SET cover_media_id = NULL WHERE cover_media_id = ?").run(id);
+}
+
+export function isMediaPubliclyAccessible(id: number) {
+  const row = db.prepare(`
+    SELECT 1 AS allowed
+    FROM media AS candidate
+    WHERE candidate.id = ?
+      AND (
+        (
+          candidate.kind = 'image'
+          AND (
+            EXISTS (
+              SELECT 1 FROM albums
+              WHERE albums.id = candidate.album_id AND albums.published = 1
+            )
+            OR EXISTS (
+              SELECT 1 FROM albums
+              WHERE albums.cover_media_id = candidate.id AND albums.published = 1
+            )
+            OR EXISTS (
+              SELECT 1 FROM timeline_events
+              WHERE timeline_events.media_id = candidate.id AND timeline_events.published = 1
+            )
+            OR EXISTS (
+              SELECT 1 FROM wishes
+              WHERE wishes.media_id = candidate.id
+            )
+            OR EXISTS (
+              SELECT 1
+              FROM homepage_settings
+              JOIN homepage_blocks ON homepage_blocks.block_type = 'hero' AND homepage_blocks.enabled = 1
+              WHERE homepage_settings.id = 1 AND homepage_settings.hero_media_id = candidate.id
+            )
+          )
+        )
+        OR (
+          candidate.kind = 'audio'
+          AND (
+            candidate.playlist_enabled = 1
+            OR (
+              candidate.id = (SELECT music_media_id FROM settings WHERE id = 1)
+              AND NOT EXISTS (
+                SELECT 1 FROM media
+                WHERE media.kind = 'audio' AND media.playlist_enabled = 1
+              )
+            )
+          )
+        )
+      )
+  `).get(id) as { allowed: number } | undefined;
+  return Boolean(row?.allowed);
 }
 
 export function resolveMediaPath(id: number, variant: string) {

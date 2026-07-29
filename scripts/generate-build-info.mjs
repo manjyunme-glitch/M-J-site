@@ -3,6 +3,9 @@ import fs from "node:fs";
 
 const repository = process.env.GITHUB_REPOSITORY || "manjyunme-glitch/M-J-site";
 const branch = process.env.GITHUB_BRANCH || "main";
+const injectedSha = process.env.APP_COMMIT_SHA?.trim() || "";
+const injectedDate = process.env.APP_COMMIT_DATE?.trim() || process.env.APP_COMMIT_TIME?.trim() || "";
+const injectedRef = process.env.APP_COMMIT_REF?.trim() || "";
 
 function git(...args) {
   try {
@@ -12,41 +15,25 @@ function git(...args) {
   }
 }
 
-async function githubCommit() {
-  const headers = { Accept: "application/vnd.github+json", "User-Agent": "m-j-site-build" };
-  if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
-  const response = await fetch(`https://api.github.com/repos/${repository}/commits/${encodeURIComponent(branch)}`, {
-    headers,
-    signal: AbortSignal.timeout(10000)
-  });
-  if (!response.ok) throw new Error(`GitHub returned ${response.status}`);
-  const data = await response.json();
-  return {
-    sha: data.sha || "",
-    message: data.commit?.message?.split("\n")[0] || "",
-    committedAt: data.commit?.committer?.date || data.commit?.author?.date || ""
-  };
-}
-
+const gitSha = injectedSha ? "" : git("rev-parse", "HEAD");
+const gitDirty = Boolean(gitSha && git("status", "--porcelain", "--untracked-files=normal"));
 let source = "unknown";
-let sha = process.env.APP_COMMIT_SHA || git("rev-parse", "HEAD");
-let message = process.env.APP_COMMIT_MESSAGE || (sha ? git("log", "-1", "--format=%s") : "");
-let committedAt = process.env.APP_COMMIT_TIME || (sha ? git("log", "-1", "--format=%cI") : "");
+const sha = injectedSha || (gitDirty ? "" : gitSha);
+const message = process.env.APP_COMMIT_MESSAGE || (sha ? git("log", "-1", "--format=%s", sha) : "");
+const committedAt = injectedDate || (sha ? git("log", "-1", "--format=%cI", sha) : "");
+const ref = injectedRef || (sha ? git("symbolic-ref", "--quiet", "--short", "HEAD") : "");
 
-if (sha) source = process.env.APP_COMMIT_SHA ? "environment" : "git";
-if (!sha) {
-  try {
-    const remote = await githubCommit();
-    ({ sha, message, committedAt } = remote);
-    source = "github-build-snapshot";
-  } catch (error) {
-    console.warn(`Build metadata unavailable: ${error instanceof Error ? error.message : String(error)}`);
-  }
+if (sha) source = injectedSha ? "build-args" : "git";
+else if (gitDirty) {
+  source = "git-dirty";
+  console.warn("Build metadata is not comparable because the Git worktree has uncommitted source");
 }
+else console.warn("Build metadata unavailable: provide APP_COMMIT_SHA when the build context has no Git metadata");
 
 fs.writeFileSync("build-info.json", JSON.stringify({
   repository,
   branch,
+  ref,
   sha: sha || "",
   message: message || "",
   committedAt: committedAt || "",

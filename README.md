@@ -4,18 +4,40 @@
 
 ## 快速启动
 
-电脑已安装 Docker Desktop 后，在项目目录运行：
+首次启动需要 Docker Desktop、Node.js 24 和 npm。克隆仓库后，在项目目录创建本机配置并安装生成密码所需的依赖：
+
+```powershell
+Copy-Item .env.example .env
+npm ci
+```
+
+分别生成前台密码哈希、后台密码哈希和 Cookie 签名密钥：
+
+```powershell
+npm run hash-password -- "你的前台密码"
+npm run hash-password -- "你的后台密码"
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+```
+
+打开 `.env`，把三次输出依次填入 `SITE_PASSWORD_HASH`、`ADMIN_PASSWORD_HASH` 和 `COOKIE_SECRET`。不要填写明文密码，也不要保留 `replace-with-...` 占位值。本地 Docker Desktop 保持以下目录设置：
+
+```env
+DATA_PATH=./data
+UPLOAD_PATH=./uploads
+```
+
+确认 `.env` 已保存后启动：
 
 ```powershell
 docker compose up -d --build
 ```
 
+`.env` 被 Git 忽略，不会进入源码或镜像；仓库不提供默认密码。
+
 打开：
 
 - 纪念册：<http://localhost:1314>
 - 管理后台：<http://localhost:1314/admin>
-
-默认密码已按要求转换成 bcrypt 哈希保存在本机 `.env`，源码和镜像中没有明文密码。
 
 停止网站：
 
@@ -88,16 +110,22 @@ docker compose start
 生成新的 bcrypt 哈希：
 
 ```powershell
-npm run hash-password -- 你的新密码
+npm run hash-password -- "你的新密码"
 ```
 
-把输出分别填入 `.env` 的 `SITE_PASSWORD_HASH` 或 `ADMIN_PASSWORD_HASH`。命令已经按 Docker Compose 要求处理 `$`，可以直接粘贴，然后重建：
+把输出填入 `.env` 的 `SITE_PASSWORD_HASH` 或 `ADMIN_PASSWORD_HASH`。命令已经按 Docker Compose 要求处理 `$`，可以直接粘贴。轮换 `SITE_PASSWORD_HASH` 会使使用旧前台密码建立的旧会话失效；轮换 `ADMIN_PASSWORD_HASH` 会使旧管理员会话以及管理员登录时自动建立的前台会话失效。若要让所有身份的全部旧会话同时失效，应生成新的 `COOKIE_SECRET`：
 
 ```powershell
-docker compose up -d --build
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 ```
 
-不要在 `.env` 中保存明文密码。
+把输出填入 `COOKIE_SECRET` 后重新创建容器：
+
+```powershell
+docker compose up -d
+```
+
+新的 `COOKIE_SECRET` 生效后，现有前台和后台签名 Cookie 都无法继续使用，所有浏览器都需要重新登录。不要在 `.env` 中保存明文密码或复用已经泄露的签名密钥。
 
 ## GitHub 更新检查
 
@@ -115,6 +143,20 @@ UPLOAD_PATH=/share/DockerData/M-J-site/uploads
 ```
 
 Token 只需授予目标仓库的 `Contents: Read-only`。后台只检查更新，不会调用 Portainer 或自动重新部署。
+
+更新状态需要两类彼此独立的信息：`GITHUB_REPOSITORY`、`GITHUB_BRANCH` 和 `GITHUB_TOKEN` 用于读取远端最新提交；`APP_COMMIT_SHA`、`APP_COMMIT_DATE` 和 `APP_COMMIT_REF` 用于标识正在运行的 Docker 构建。只有当前构建包含真实 SHA 时，后台才会显示“已是最新”或“发现更新”；构建元数据缺失时会显示“状态未知”，不会把远端最新提交当成当前版本。
+
+从本地 Git 工作区构建 Docker 镜像时，可在同一个 PowerShell 窗口复制执行：
+
+```powershell
+if (git status --porcelain) { throw "工作区包含未提交改动，请先提交后再生成版本标识" }
+$env:APP_COMMIT_SHA = (git rev-parse HEAD).Trim()
+$env:APP_COMMIT_DATE = (git show -s --format=%cI HEAD).Trim()
+$env:APP_COMMIT_REF = (git rev-parse --symbolic-full-name HEAD).Trim()
+docker compose up -d --build
+```
+
+这三个值必须描述本次实际构建的源码，不能用“远端最新提交”代替本地构建提交。直接在含有未提交或未跟踪源码的工作区运行本地构建时，构建信息会标记为 `git-dirty` 且不参与版本比较。
 
 ## Portainer 部署
 
@@ -138,7 +180,17 @@ GITHUB_BRANCH=main
 GITHUB_TOKEN=github_pat_xxx
 ```
 
-两个密码值可在项目目录运行 `npm run hash-password -- <密码>` 生成。仓库拉取认证和 `GITHUB_TOKEN` 可以使用同一个只读 token。使用 HTTPS 反向代理后，将 `SECURE_COOKIES` 和 `TRUST_PROXY` 都改为 `true`。
+两个密码值可在项目目录运行 `npm run hash-password -- "<密码>"` 生成。仓库拉取认证和 `GITHUB_TOKEN` 可以使用同一个只读 token。使用 HTTPS 反向代理后，将 `SECURE_COOKIES` 和 `TRUST_PROXY` 都改为 `true`。
+
+如果 Portainer 能把本次检出的真实提交作为 Stack 变量传给 Compose，可同时填写：
+
+```env
+APP_COMMIT_SHA=本次实际构建的完整提交SHA
+APP_COMMIT_DATE=该提交的ISO-8601时间
+APP_COMMIT_REF=refs/heads/main
+```
+
+这些值必须随每次部署更新。若 Portainer 无法提供本次构建的真实 commit，应让三个变量保持空值；后台显示“状态未知”是预期行为。不要手工复制 GitHub 最新 SHA 充当当前构建。
 
 Compose 默认把数据库绑定到 `/share/DockerData/M-J-site/data`，把上传文件绑定到 `/share/DockerData/M-J-site/uploads`。容器启动时会自动创建目录、修复权限，再以非 root 用户运行应用。本地开发如需使用项目目录，可覆盖为 `DATA_PATH=./data` 和 `UPLOAD_PATH=./uploads`。
 
@@ -169,8 +221,19 @@ TRUST_PROXY=true
 
 ## 本地开发
 
+本地开发使用 Node.js 24。首次运行同样需要创建 `.env`，不能跳过密码和 Cookie 密钥配置：
+
 ```powershell
-npm install
+if (!(Test-Path -LiteralPath .env)) { Copy-Item .env.example .env }
+npm ci
+npm run hash-password -- "你的前台密码"
+npm run hash-password -- "你的后台密码"
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+```
+
+把三次输出分别填入 `.env` 的 `SITE_PASSWORD_HASH`、`ADMIN_PASSWORD_HASH` 和 `COOKIE_SECRET`，确认 `DATABASE_PATH=./data/love-journal.db`、`UPLOAD_DIR=./uploads`，然后启动：
+
+```powershell
 $env:NODE_ENV="development"
 npm run dev
 ```
