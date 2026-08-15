@@ -177,6 +177,7 @@ const settingsSchema = z.object({
   womanName: z.string().min(1).max(80),
   womanBirthday: calendarDate,
   musicMediaId: z.coerce.number().int().positive().nullable().optional().transform((value) => value || null),
+  musicAutoplay: bool.default(0),
   musicMode: z.enum(["sequence", "repeat-one", "shuffle"]).default("sequence")
 });
 
@@ -214,7 +215,7 @@ function validateMusicReferences(settings: SettingsInput | null, tracks: MusicTr
 function updateSettings(settings: SettingsInput) {
   db.prepare(`
     UPDATE settings SET site_title = ?, subtitle = ?, hero_note = ?, met_date = ?, together_date = ?,
-      man_name = ?, man_birthday = ?, woman_name = ?, woman_birthday = ?, music_media_id = ?, music_mode = ?, updated_at = CURRENT_TIMESTAMP
+      man_name = ?, man_birthday = ?, woman_name = ?, woman_birthday = ?, music_media_id = ?, music_autoplay = ?, music_mode = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = 1
   `).run(
     settings.siteTitle,
@@ -227,6 +228,7 @@ function updateSettings(settings: SettingsInput) {
     settings.womanName,
     settings.womanBirthday,
     settings.musicMediaId,
+    settings.musicAutoplay,
     settings.musicMode
   );
 }

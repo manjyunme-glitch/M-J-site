@@ -4,7 +4,7 @@ export const backupFormat = "m-j-site-backup" as const;
 export const backupVersion = 1 as const;
 
 export const backupTableColumns = {
-  settings: ["id", "site_title", "subtitle", "hero_note", "met_date", "together_date", "man_name", "man_birthday", "woman_name", "woman_birthday", "music_media_id", "music_mode", "updated_at"],
+  settings: ["id", "site_title", "subtitle", "hero_note", "met_date", "together_date", "man_name", "man_birthday", "woman_name", "woman_birthday", "music_media_id", "music_autoplay", "music_mode", "updated_at"],
   anniversaries: ["id", "title", "event_date", "annual", "description", "enabled", "sort_order", "created_at"],
   albums: ["id", "title", "event_date", "description", "cover_media_id", "published", "sort_order", "created_at"],
   media: ["id", "album_id", "kind", "original_name", "file_path", "web_path", "thumb_path", "mime_type", "display_name", "caption", "taken_date", "image_width", "image_height", "filter_preset", "playlist_enabled", "sort_order", "created_at"],
@@ -107,6 +107,7 @@ const rowSchemas = {
     woman_name: requiredString(80),
     woman_birthday: calendarDate,
     music_media_id: nullableId,
+    music_autoplay: booleanInteger,
     music_mode: z.enum(["sequence", "repeat-one", "shuffle"]),
     updated_at: timestamp
   }),
@@ -348,6 +349,7 @@ export function parseBackupManifest(input: unknown): BackupManifest {
     tables[table] = rows.map((row, index) => {
       if (!row || typeof row !== "object" || Array.isArray(row)) throw new Error(`${table} 第 ${index + 1} 条记录格式不正确`);
       const record = row as Record<string, unknown>;
+      if (table === "settings" && !Object.prototype.hasOwnProperty.call(record, "music_autoplay")) record.music_autoplay = 0;
       const missing = columns.find((column) => !Object.prototype.hasOwnProperty.call(record, column));
       if (missing) throw new Error(`${table} 第 ${index + 1} 条记录缺少字段：${missing}`);
       const parsed = schema.safeParse(record);

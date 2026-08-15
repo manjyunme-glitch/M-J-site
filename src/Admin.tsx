@@ -233,6 +233,7 @@ const settingsGuide: AdminGuide = {
   steps: [
     "先改站点文字、故事页导语和日期，再处理音乐，最后统一点“保存设置”。",
     "上传歌曲后，在歌曲收纳里勾选“主页播放”，可用上下箭头调整播放顺序。",
+    "若希望打开首页就出声，勾选“进入主页时自动播放”，并选择进门播放的那一首。",
     "保存后打开前台，检查浏览器标题、首页短句、故事页导语、倒数日期和播放器歌单。"
   ],
   previewHref: "/",
@@ -742,12 +743,13 @@ function SettingsPanel({ content, reload }: { content: Content; reload: () => Pr
         artist: item.artist,
         sortOrder: (index + 1) * 10
       }));
-      const firstEnabled = normalizedTracks.find((item) => item.enabled)?.id || null;
+      const enabledIds = normalizedTracks.filter((item) => item.enabled).map((item) => item.id);
+      const startTrackId = form.musicMediaId && enabledIds.includes(form.musicMediaId) ? form.musicMediaId : (enabledIds[0] || null);
       const { id: _id, musicUrl: _musicUrl, musicPlaylist: _musicPlaylist, ...body } = form;
       await api("/api/admin/settings", {
         method: "PUT",
         body: jsonBody({
-          settings: { ...body, musicMediaId: firstEnabled },
+          settings: { ...body, musicMediaId: startTrackId, musicAutoplay: form.musicAutoplay ? 1 : 0 },
           tracks: normalizedTracks
         })
       });
@@ -759,7 +761,8 @@ function SettingsPanel({ content, reload }: { content: Content; reload: () => Pr
       setSaving(false);
     }
   };
-  const enabledCount = tracks.filter((item) => item.enabled).length;
+  const enabledTracks = tracks.filter((item) => item.enabled);
+  const enabledCount = enabledTracks.length;
   return (
     <section className="admin-panel">
       <header className="panel-header">
@@ -778,8 +781,10 @@ function SettingsPanel({ content, reload }: { content: Content; reload: () => Pr
         <label className="field"><span>她的名字</span><input maxLength={80} value={form.womanName} onChange={(event) => update("womanName", event.target.value)} /></label>
         <label className="field"><span>她的生日</span><input type="date" value={form.womanBirthday} onChange={(event) => update("womanBirthday", event.target.value)} /></label>
         <div className="music-settings">
-          <div className="music-settings-intro"><Music /><div><h3>主页歌单</h3><p>歌曲先收进音乐库，再选择哪些参与主页播放。访客仍需主动点击开始。</p></div></div>
+          <div className="music-settings-intro"><Music /><div><h3>主页歌单</h3><p>歌曲先收进音乐库，再选择哪些参与主页播放。打开自动播放后，进入首页会从指定歌曲开始；部分浏览器会拦截自动出声，访客点按页面后就会播放。</p></div></div>
           <UploadBox reload={reload} accept="audio/mpeg,audio/mp4,audio/x-m4a,audio/ogg" />
+          <label className="check-field full-field"><input type="checkbox" checked={Boolean(form.musicAutoplay)} onChange={(event) => update("musicAutoplay", event.target.checked ? 1 : 0)} /><span>进入主页时自动播放</span></label>
+          <label className="field full-field"><span>进入主页播放的歌曲</span><select value={enabledTracks.some((item) => item.id === form.musicMediaId) ? String(form.musicMediaId) : (enabledTracks[0] ? String(enabledTracks[0].id) : "")} onChange={(event) => update("musicMediaId", event.target.value ? Number(event.target.value) : null)} disabled={!enabledTracks.length}>{enabledTracks.length ? enabledTracks.map((item) => <option value={item.id} key={item.id}>{item.title}{item.artist ? ` · ${item.artist}` : ""}</option>) : <option value="">请先勾选至少一首主页播放歌曲</option>}</select></label>
           <label className="field full-field"><span>默认播放模式</span><select value={form.musicMode} onChange={(event) => update("musicMode", event.target.value as PlaybackMode)}><option value="sequence">顺序播放</option><option value="repeat-one">单曲循环</option><option value="shuffle">随机播放</option></select></label>
           <div className="music-library full-field">
             <header><div><small>MUSIC LIBRARY</small><h4>歌曲收纳</h4></div><span>{tracks.length} 首已上传 · {enabledCount} 首在主页</span></header>

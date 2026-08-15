@@ -22,6 +22,7 @@ export type Settings = {
   womanName: string;
   womanBirthday: string;
   musicMediaId: number | null;
+  musicAutoplay: number;
   musicMode: PlaybackMode;
   musicUrl?: string | null;
   musicPlaylist: MusicTrack[];

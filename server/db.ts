@@ -21,6 +21,7 @@ db.exec(`
     woman_name TEXT NOT NULL,
     woman_birthday TEXT NOT NULL,
     music_media_id INTEGER,
+    music_autoplay INTEGER NOT NULL DEFAULT 0,
     music_mode TEXT NOT NULL DEFAULT 'sequence',
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (music_media_id) REFERENCES media(id) ON DELETE SET NULL
@@ -180,6 +181,7 @@ ensureColumn("media", "image_height", "INTEGER");
 ensureColumn("media", "filter_preset", "TEXT NOT NULL DEFAULT 'original'");
 ensureColumn("media", "playlist_enabled", "INTEGER NOT NULL DEFAULT 0");
 ensureColumn("settings", "music_mode", "TEXT NOT NULL DEFAULT 'sequence'");
+ensureColumn("settings", "music_autoplay", "INTEGER NOT NULL DEFAULT 0");
 ensureColumn("homepage_secret_cards", "reveal_style", "TEXT NOT NULL DEFAULT 'flip'");
 
 const seedSettings = db.prepare(`

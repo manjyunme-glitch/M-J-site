@@ -87,6 +87,7 @@ function settingsPayload(siteTitle: string, musicMediaId: number) {
     womanName: "J",
     womanBirthday: "1999-11-22",
     musicMediaId,
+    musicAutoplay: 0,
     musicMode: "shuffle"
   };
 }
@@ -473,6 +474,20 @@ test("media authorization, upload prevalidation, atomic settings, and calendar v
     });
     assert.equal(response.status, 400);
     assert.equal((db.prepare("SELECT site_title FROM settings WHERE id = 1").get() as { site_title: string }).site_title, "原子保存成功");
+
+    response = await fetch(`${baseUrl}/api/admin/settings`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Cookie: adminCookie },
+      body: JSON.stringify({
+        settings: { ...settingsPayload("进门自动播放", music), musicAutoplay: 1 },
+        tracks: [{ id: music, enabled: true, title: "测试歌曲", artist: "M × J", sortOrder: 10 }]
+      })
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(
+      { ...(db.prepare("SELECT site_title, music_autoplay, music_media_id FROM settings WHERE id = 1").get() as Record<string, unknown>) },
+      { site_title: "进门自动播放", music_autoplay: 1, music_media_id: music }
+    );
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     db.close();

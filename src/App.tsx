@@ -391,21 +391,43 @@ const playbackModes: Array<{ id: PlaybackMode; label: string; icon: typeof Repea
   { id: "shuffle", label: "随机播放", icon: Shuffle }
 ];
 
-function MusicPlayer({ tracks, defaultMode }: { tracks: MusicTrack[]; defaultMode: PlaybackMode }) {
+function startTrackIndex(tracks: MusicTrack[], startTrackId: number | null) {
+  const index = tracks.findIndex((item) => item.id === startTrackId);
+  return index >= 0 ? index : 0;
+}
+
+function MusicPlayer({ tracks, defaultMode, autoplay, startTrackId }: { tracks: MusicTrack[]; defaultMode: PlaybackMode; autoplay: boolean; startTrackId: number | null }) {
+  const location = useLocation();
   const audioRef = useRef<HTMLAudioElement>(null);
   const pendingPlayRef = useRef(false);
+  const autoplayArmedRef = useRef(false);
   const pointerStartRef = useRef<number | null>(null);
-  const [currentIndex, setCurrentIndex] = useState(0);
+  const [currentIndex, setCurrentIndex] = useState(() => startTrackIndex(tracks, startTrackId));
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [playbackError, setPlaybackError] = useState("");
+  const [needsGesture, setNeedsGesture] = useState(false);
   const [collapsed, setCollapsed] = useState(() => window.localStorage.getItem("mj-music-collapsed") === "true");
   const [mode, setMode] = useState<PlaybackMode>(() => {
     const saved = window.localStorage.getItem("mj-music-mode") as PlaybackMode | null;
     return playbackModes.some((item) => item.id === saved) ? saved as PlaybackMode : defaultMode;
   });
   const track = tracks[currentIndex] || tracks[0];
+
+  const tryPlay = async () => {
+    const audio = audioRef.current;
+    if (!audio) return false;
+    try {
+      await audio.play();
+      setNeedsGesture(false);
+      return true;
+    } catch {
+      setPlaying(false);
+      setNeedsGesture(true);
+      return false;
+    }
+  };
 
   useEffect(() => {
     if (currentIndex >= tracks.length) setCurrentIndex(0);
@@ -428,12 +450,36 @@ function MusicPlayer({ tracks, defaultMode }: { tracks: MusicTrack[]; defaultMod
     audio.load();
     if (pendingPlayRef.current) {
       pendingPlayRef.current = false;
-      void audio.play().catch(() => {
-        setPlaying(false);
-        setPlaybackError("这首音乐暂时无法播放。");
-      });
+      void tryPlay();
     }
   }, [track?.id]);
+
+  useEffect(() => {
+    if (!autoplay || !track || location.pathname !== "/" || autoplayArmedRef.current) return;
+    autoplayArmedRef.current = true;
+    let unlocked = false;
+    const unlock = () => {
+      void tryPlay().then((started) => {
+        if (!started || unlocked) return;
+        unlocked = true;
+        window.removeEventListener("pointerdown", unlock, true);
+        window.removeEventListener("keydown", unlock, true);
+      });
+    };
+    pendingPlayRef.current = true;
+    void tryPlay().then((ok) => {
+      if (ok) {
+        unlocked = true;
+        return;
+      }
+      window.addEventListener("pointerdown", unlock, true);
+      window.addEventListener("keydown", unlock, true);
+    });
+    return () => {
+      window.removeEventListener("pointerdown", unlock, true);
+      window.removeEventListener("keydown", unlock, true);
+    };
+  }, [autoplay, track?.id, location.pathname]);
 
   const toggle = async () => {
     if (!audioRef.current) return;
@@ -548,9 +594,10 @@ function MusicPlayer({ tracks, defaultMode }: { tracks: MusicTrack[]; defaultMod
         onLoadedMetadata={(event) => setDuration(event.currentTarget.duration || 0)}
         onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
       />
-      {collapsed ? <button type="button" className="music-pull-tab" onClick={() => setCollapsed(false)} aria-label="展开音乐播放器"><Music2 size={18} /><span>{playing ? "正在播放" : "音乐"}</span></button> : <section className="music-player" data-playing={playing} aria-label="主页音乐播放器">
+      {collapsed ? <button type="button" className="music-pull-tab" onClick={() => setCollapsed(false)} aria-label="展开音乐播放器"><Music2 size={18} /><span>{playing ? "正在播放" : needsGesture ? "点按播放" : "音乐"}</span></button> : <section className="music-player" data-playing={playing} aria-label="主页音乐播放器">
         <button type="button" className="music-collapse" onClick={() => setCollapsed(true)} aria-label="收起音乐播放器" title="向右滑动也可收起"><ChevronRight size={17} /></button>
         <div className="music-heading"><div className="music-meta"><small>OUR SOUNDTRACK · {String(currentIndex + 1).padStart(2, "0")}/{String(tracks.length).padStart(2, "0")}</small><strong>{track.title}</strong><span>{track.artist}</span></div><span className={playing ? "sound-wave is-playing" : "sound-wave"}><i /><i /><i /><i /></span></div>
+        {needsGesture && !playbackError && <div className="music-error" role="status">浏览器拦截了自动播放，点按页面任意处即可开始。</div>}
         {playbackError && <div className="music-error" role="alert"><span>{playbackError}</span><button type="button" onClick={() => { setPlaybackError(""); nextTrack(true); }}>下一首</button></div>}
         <div className="music-progress"><input type="range" min="0" max={duration || 0} step="0.1" value={Math.min(currentTime, duration || 0)} onChange={(event) => { if (audioRef.current) audioRef.current.currentTime = Number(event.target.value); }} aria-label="播放进度" /><div><time>{formatTime(currentTime)}</time><time>{formatTime(duration)}</time></div></div>
         <div className="music-controls"><button type="button" onClick={previousTrack} aria-label="上一首"><SkipBack /></button><button type="button" className="music-play" onClick={toggle} aria-label={playing ? "暂停音乐" : "播放音乐"} aria-pressed={playing}>{playing ? <Pause /> : <Play />}</button><button type="button" onClick={() => nextTrack(playing)} aria-label="下一首"><SkipForward /></button><button type="button" className="music-mode" onClick={cycleMode} aria-label={`当前${activeMode.label}，点击切换`} title={activeMode.label}><ModeIcon /><span>{activeMode.label}</span></button></div>
@@ -899,7 +946,7 @@ function Journal({ content }: { content: Content }) {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </div>
-      <MusicPlayer tracks={content.settings.musicPlaylist} defaultMode={content.settings.musicMode} />
+      <MusicPlayer tracks={content.settings.musicPlaylist} defaultMode={content.settings.musicMode} autoplay={Boolean(content.settings.musicAutoplay)} startTrackId={content.settings.musicMediaId} />
       <SpecialDaySurprise content={content} />
       {lightbox && <Lightbox src={lightbox} onClose={() => setLightbox(null)} />}
     </div>

@@ -19,6 +19,7 @@ function validTables(): BackupTables {
       woman_name: "J",
       woman_birthday: "1999-11-22",
       music_media_id: 2,
+      music_autoplay: 0,
       music_mode: "sequence",
       updated_at: timestamp
     }],
@@ -206,6 +207,13 @@ test("a complete version 1 backup remains accepted", () => {
   assert.equal(parsed.version, 1);
   assert.equal(parsed.tables.homepage_blocks.length, 7);
   assert.equal(parsed.summary.mediaBytes, 0);
+});
+
+test("backup manifest defaults missing music_autoplay for older files", () => {
+  const tables = validTables();
+  delete tables.settings[0].music_autoplay;
+  const parsed = parseBackupManifest(validManifest(tables));
+  assert.equal(parsed.tables.settings[0].music_autoplay, 0);
 });
 
 test("backup manifest requires every declared table column", () => {

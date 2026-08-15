@@ -410,6 +410,7 @@ body::before {
 .filter-option strong, .filter-option small { display: block; }.filter-option strong { margin-top: 7px; font: 13px Georgia, "Noto Serif SC", serif; }.filter-option small { min-height: 28px; margin-top: 3px; color: var(--muted); font-size: 8px; line-height: 1.5; letter-spacing: 0; }
 .filter-original { filter: none; }.filter-warm-pencil { filter: sepia(.34) saturate(.74) contrast(1.04) brightness(1.08); }.filter-faded-book { filter: sepia(.38) saturate(.54) contrast(.9) brightness(1.07); }.filter-blue-diary { filter: sepia(.12) saturate(.68) hue-rotate(154deg) contrast(.95) brightness(1.02); }.filter-soft-film { filter: saturate(.82) contrast(.88) brightness(1.05); }
 .music-settings-intro { display: flex; align-items: flex-start; gap: 14px; }.music-settings-intro svg { flex: 0 0 auto; margin-top: 5px; }
+.music-settings .check-field { align-items: center; min-height: 48px; padding: 4px 2px; }
 .music-library { border: 1px solid var(--line); background: var(--paper); }
 .music-library > header { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 17px 18px; border-bottom: 1px solid var(--line); background: var(--white); }
 .music-library h4 { margin: 4px 0 0; font: 22px Georgia, "Noto Serif SC", serif; }.music-library > header > span { color: var(--muted); font-size: 11px; }
