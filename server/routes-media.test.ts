@@ -75,6 +75,10 @@ function multerFile(name: string, mimetype: string, buffer: Buffer) {
   } as Express.Multer.File;
 }
 
+function flacPayload() {
+  return Buffer.concat([Buffer.from("fLaC"), crypto.randomBytes(32)]);
+}
+
 function settingsPayload(siteTitle: string, musicMediaId: number) {
   return {
     siteTitle,
@@ -333,6 +337,20 @@ test("media authorization, upload prevalidation, atomic settings, and calendar v
     assert.equal(response.status, 201);
     assert.deepEqual(fs.readdirSync(backupStagingDir).sort(), stagingEntriesBefore);
 
+    const flacUploadForm = new FormData();
+    flacUploadForm.append("files", new Blob([new Uint8Array(flacPayload())], { type: "audio/flac" }), "route.flac");
+    response = await fetch(`${baseUrl}/api/admin/media`, {
+      method: "POST",
+      headers: { Cookie: adminCookie },
+      body: flacUploadForm
+    });
+    assert.equal(response.status, 201);
+    const uploadedFlac = await response.json() as Array<{ originalName: string; filePath: string; mimeType: string }>;
+    assert.equal(uploadedFlac[0].originalName, "route.flac");
+    assert.equal(uploadedFlac[0].mimeType, "audio/flac");
+    assert.match(uploadedFlac[0].filePath, /\.flac$/);
+    assert.deepEqual(fs.readdirSync(backupStagingDir).sort(), stagingEntriesBefore);
+
     const invalidMetadataForm = new FormData();
     invalidMetadataForm.append("files", new Blob([new Uint8Array(validImageBuffer)], { type: "image/jpeg" }), "invalid-metadata.jpg");
     invalidMetadataForm.append("filterPresets", "not-a-filter");
@@ -384,7 +402,7 @@ test("media authorization, upload prevalidation, atomic settings, and calendar v
     const oversizedAudioForm = new FormData();
     oversizedAudioForm.append(
       "files",
-      new Blob([new Uint8Array(30 * 1024 * 1024 + 1)], { type: "audio/mpeg" }),
+      new Blob([new Uint8Array(80 * 1024 * 1024 + 1)], { type: "audio/mpeg" }),
       "too-large.mp3"
     );
     response = await fetch(`${baseUrl}/api/admin/media`, {
@@ -437,6 +455,30 @@ test("media authorization, upload prevalidation, atomic settings, and calendar v
     assert.equal(Number((db.prepare("SELECT COUNT(*) AS count FROM media").get() as { count: number }).count), mediaCountBefore);
     assert.deepEqual(fs.readdirSync(uploadDir).sort(), filesBefore);
     db.exec("DROP TRIGGER fail_second_test_upload");
+
+    const storedAudio = async (name: string, mimetype: string, buffer: Buffer) => {
+      const [id] = await persistUploads([multerFile(name, mimetype, buffer)], null, [{}]);
+      return db.prepare("SELECT original_name AS originalName, file_path AS filePath, mime_type AS mimeType FROM media WHERE id = ?").get(id) as {
+        originalName: string;
+        filePath: string;
+        mimeType: string;
+      };
+    };
+    const flacFile = flacPayload();
+    for (const [name, mime] of [
+      ["song.flac", "audio/flac"],
+      ["windows.flac", "audio/x-flac"],
+      ["empty-type.flac", ""],
+      ["octet.flac", "application/octet-stream"]
+    ] as const) {
+      const row = await storedAudio(name, mime, flacFile);
+      assert.equal(row.originalName, name);
+      assert.match(row.filePath, /\.flac$/);
+      assert.equal(row.mimeType, "audio/flac");
+      assert.equal(fs.existsSync(path.join(uploadDir, row.filePath)), true);
+    }
+    await assert.rejects(persistUploads([multerFile("fake.flac", "audio/flac", Buffer.from("not-flac"))], null, [{}]), /不是有效的 FLAC/);
+    await assert.rejects(persistUploads([multerFile("wrong.flac", "text/plain", flacFile)], null, [{}]), /仅支持/);
 
     response = await fetch(`${baseUrl}/api/admin/settings`, {
       method: "PUT",

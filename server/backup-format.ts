@@ -92,7 +92,7 @@ const homepageCoreTypes = ["hero", "nextDate", "profiles", "secrets", "contents"
 const homepageInteractiveTypes = ["questionDraw", "memoryMatch", "anniversaryDraw"] as const;
 const homepageBlockTypes = [...homepageCoreTypes, ...homepageInteractiveTypes] as const;
 const imageFilterPresets = ["original", "warm-pencil", "faded-book", "blue-diary", "soft-film"] as const;
-const mediaMimes = ["image/jpeg", "image/png", "image/webp", "audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/ogg"] as const;
+const mediaMimes = ["image/jpeg", "image/png", "image/webp", "audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/ogg", "audio/flac", "audio/x-flac"] as const;
 
 const rowSchemas = {
   settings: z.object({
@@ -319,7 +319,7 @@ function validateRelationships(tables: BackupTables) {
       if (row.playlist_enabled !== 0) throw new Error("照片不能加入音乐歌单");
     } else {
       if (row.album_id !== null || row.web_path !== null || row.thumb_path !== null || row.image_width !== null || row.image_height !== null) throw new Error("音频包含不适用的图片字段");
-      if (!["audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/ogg"].includes(row.mime_type as string)) throw new Error("音频媒体类型不正确");
+      if (!["audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/ogg", "audio/flac", "audio/x-flac"].includes(row.mime_type as string)) throw new Error("音频媒体类型不正确");
       if (row.filter_preset !== "original") throw new Error("音频滤镜配置不正确");
     }
   }

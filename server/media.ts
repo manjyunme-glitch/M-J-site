@@ -6,8 +6,34 @@ import { config } from "./config.js";
 import { db } from "./db.js";
 import { normalizeUploadFilename } from "./filename.js";
 
+export const imageMaxBytes = 15 * 1024 * 1024;
+export const audioMaxBytes = 80 * 1024 * 1024;
+
 const imageMimes = new Set(["image/jpeg", "image/png", "image/webp"]);
-const audioMimes = new Set(["audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/ogg"]);
+const audioKinds = ["mp3", "m4a", "ogg", "flac"] as const;
+type AudioKind = (typeof audioKinds)[number];
+const audioByMime = new Map<string, AudioKind>([
+  ["audio/mpeg", "mp3"],
+  ["audio/mp4", "m4a"],
+  ["audio/x-m4a", "m4a"],
+  ["audio/ogg", "ogg"],
+  ["audio/flac", "flac"],
+  ["audio/x-flac", "flac"]
+]);
+const audioByExtension = new Map<string, AudioKind>([
+  [".mp3", "mp3"],
+  [".m4a", "m4a"],
+  [".ogg", "ogg"],
+  [".flac", "flac"]
+]);
+const audioStored = {
+  mp3: { extension: ".mp3", mime: "audio/mpeg" },
+  m4a: { extension: ".m4a", mime: "audio/mp4" },
+  ogg: { extension: ".ogg", mime: "audio/ogg" },
+  flac: { extension: ".flac", mime: "audio/flac" }
+} as const;
+const flacSignature = Buffer.from("fLaC");
+
 export const imageFilterPresets = ["original", "warm-pencil", "faded-book", "blue-diary", "soft-film"] as const;
 export type ImageFilterPreset = typeof imageFilterPresets[number];
 
@@ -20,7 +46,7 @@ export type UploadMetadata = {
 
 type ValidatedUpload =
   | { kind: "image"; dimensions: { width: number | null; height: number | null } }
-  | { kind: "audio" };
+  | { kind: "audio"; format: AudioKind };
 
 const warmMatrix = [
   [0.9, 0.08, 0.02],
@@ -45,6 +71,32 @@ function uploadSource(file: Express.Multer.File): UploadSource {
 function copyUploadSource(source: UploadSource, target: string) {
   if (typeof source === "string") fs.copyFileSync(source, target);
   else fs.writeFileSync(target, source);
+}
+
+function readUploadPrefix(source: UploadSource, bytes: number) {
+  if (Buffer.isBuffer(source)) return source.subarray(0, Math.min(bytes, source.length));
+  const descriptor = fs.openSync(source, "r");
+  try {
+    const prefix = Buffer.alloc(bytes);
+    const read = fs.readSync(descriptor, prefix, 0, bytes, 0);
+    return prefix.subarray(0, read);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function hasFlacSignature(prefix: Buffer) {
+  if (prefix.length >= 4 && prefix.subarray(0, 4).equals(flacSignature)) return true;
+  if (prefix.length >= 10 && prefix.subarray(0, 3).toString("ascii") === "ID3") return prefix.includes(flacSignature);
+  return false;
+}
+
+function resolveAudioKind(file: Express.Multer.File): AudioKind | null {
+  const mime = (file.mimetype || "").trim().toLowerCase();
+  const fromMime = audioByMime.get(mime);
+  if (fromMime) return fromMime;
+  if (!mime || mime === "application/octet-stream") return audioByExtension.get(path.extname(file.originalname).toLowerCase()) || null;
+  return null;
 }
 
 async function filteredImage(input: UploadSource, preset: ImageFilterPreset, resize: Parameters<ReturnType<typeof sharp>["resize"]>[0]) {
@@ -88,15 +140,19 @@ function normalizedDimensions(metadata: { width?: number; height?: number; orien
 
 export async function validateUpload(file: Express.Multer.File): Promise<ValidatedUpload> {
   if (imageMimes.has(file.mimetype)) {
-    if (file.size > 15 * 1024 * 1024) throw new Error("单张图片不能超过 15MB");
+    if (file.size > imageMaxBytes) throw new Error("单张图片不能超过 15MB");
     const dimensions = normalizedDimensions(await sharp(uploadSource(file)).metadata());
     return { kind: "image", dimensions };
   }
-  if (audioMimes.has(file.mimetype)) {
-    if (file.size > 30 * 1024 * 1024) throw new Error("音乐文件不能超过 30MB");
-    return { kind: "audio" };
+  const audio = resolveAudioKind(file);
+  if (audio) {
+    if (file.size > audioMaxBytes) throw new Error("音乐文件不能超过 80MB");
+    if (audio === "flac" && !hasFlacSignature(readUploadPrefix(uploadSource(file), 64 * 1024))) {
+      throw new Error("不是有效的 FLAC 文件");
+    }
+    return { kind: "audio", format: audio };
   }
-  throw new Error("仅支持 JPEG、PNG、WebP、MP3、M4A 和 OGG 文件");
+  throw new Error("仅支持 JPEG、PNG、WebP、MP3、M4A、OGG 和 FLAC 文件");
 }
 
 function cleanupStoredPaths(relativePaths: string[]) {
@@ -145,14 +201,14 @@ async function persistValidatedUpload(file: Express.Multer.File, validation: Val
     }
   }
 
-  const extension = file.mimetype === "audio/ogg" ? ".ogg" : file.mimetype === "audio/mpeg" ? ".mp3" : ".m4a";
-  const storedName = `${id}${extension}`;
+  const stored = audioStored[validation.format];
+  const storedName = `${id}${stored.extension}`;
   try {
     copyUploadSource(source, path.join(config.uploadDir, storedName));
     const result = db.prepare(`
       INSERT INTO media (album_id, kind, original_name, file_path, mime_type)
       VALUES (NULL, 'audio', ?, ?, ?)
-    `).run(originalName, storedName, file.mimetype);
+    `).run(originalName, storedName, stored.mime);
     return Number(result.lastInsertRowid);
   } catch (error) {
     cleanupStoredPaths([storedName]);

@@ -12,7 +12,7 @@ import { config } from "./config.js";
 import { db, camelizeRow } from "./db.js";
 import { clearSessions, createAdminSession, createSiteSession, hasAdminAccess, hasSiteAccess, requireAdmin, requireSite } from "./auth.js";
 import { getContent } from "./content.js";
-import { imageFilterPresets, isMediaPubliclyAccessible, persistUploads, removeMediaFiles, resolveMediaPath, updateImageFilter } from "./media.js";
+import { audioMaxBytes, imageFilterPresets, isMediaPubliclyAccessible, persistUploads, removeMediaFiles, resolveMediaPath, updateImageFilter } from "./media.js";
 import { getDeploymentStatus } from "./version.js";
 import { BackupExportBusyError, getBackupExportStatus, inspectFullBackup, preflightFullBackup, recordBackupExportStatus, restoreInspectedBackup, streamFullBackup } from "./backup.js";
 import { RequestTooLargeError } from "./http.js";
@@ -462,9 +462,9 @@ api.post("/admin/backup/restore", requireAdmin, (req, res) => {
 
 const mediaUploadLimits = {
   files: 30,
-  fileBytes: 30 * 1024 * 1024,
-  totalFileBytes: 300 * 1024 * 1024,
-  requestBytes: 305 * 1024 * 1024,
+  fileBytes: audioMaxBytes,
+  totalFileBytes: 800 * 1024 * 1024,
+  requestBytes: 805 * 1024 * 1024,
   fields: 121,
   fieldBytes: 16 * 1024,
   parts: 151

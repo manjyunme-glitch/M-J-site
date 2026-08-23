@@ -489,8 +489,8 @@ function UploadBox({ albumId, reload, accept = "image/jpeg,image/png,image/webp"
   const validateFiles = (files: FileList | File[]) => {
     const selected = Array.from(files);
     const allowedMimes = new Set(accept.split(",").map((item) => item.trim().toLowerCase()));
-    const allowedExtensions = new Set(isAudio ? [".mp3", ".m4a", ".ogg"] : [".jpg", ".jpeg", ".png", ".webp"]);
-    const maxBytes = (isAudio ? 30 : 15) * 1024 * 1024;
+    const allowedExtensions = new Set(isAudio ? [".mp3", ".m4a", ".ogg", ".flac"] : [".jpg", ".jpeg", ".png", ".webp"]);
+    const maxBytes = (isAudio ? 80 : 15) * 1024 * 1024;
     const available = Math.max(0, 30 - (isAudio ? 0 : pending.length));
     const acceptedFiles: File[] = [];
     const errors: string[] = [];
@@ -500,7 +500,7 @@ function UploadBox({ albumId, reload, accept = "image/jpeg,image/png,image/webp"
       if (!typeAccepted) {
         errors.push(`${file.name}：文件格式不支持`);
       } else if (file.size > maxBytes) {
-        errors.push(`${file.name}：超过 ${isAudio ? 30 : 15}MB`);
+        errors.push(`${file.name}：超过 ${isAudio ? 80 : 15}MB`);
       } else {
         acceptedFiles.push(file);
       }
@@ -562,7 +562,7 @@ function UploadBox({ albumId, reload, accept = "image/jpeg,image/png,image/webp"
       >
         <Upload />
         <span>{uploading ? "正在处理文件" : dragging ? "松开即可加入" : "选择或拖入文件"}</span>
-        <small>{isAudio ? "MP3 / M4A / OGG，可多选，单首最大 30MB" : "JPEG / PNG / WebP，单张最大 15MB；上传前可预览主题滤镜"}</small>
+        <small>{isAudio ? "MP3 / M4A / OGG / FLAC，可多选，单首最大 80MB" : "JPEG / PNG / WebP，单张最大 15MB；上传前可预览主题滤镜"}</small>
         <input type="file" accept={accept} multiple onChange={(event) => { if (event.target.files) handleFiles(event.target.files); event.target.value = ""; }} disabled={uploading} />
       </label>
       {!isAudio && pending.length > 0 && <div className="upload-queue">
@@ -782,7 +782,7 @@ function SettingsPanel({ content, reload }: { content: Content; reload: () => Pr
         <label className="field"><span>她的生日</span><input type="date" value={form.womanBirthday} onChange={(event) => update("womanBirthday", event.target.value)} /></label>
         <div className="music-settings">
           <div className="music-settings-intro"><Music /><div><h3>主页歌单</h3><p>歌曲先收进音乐库，再选择哪些参与主页播放。打开自动播放后，进入首页会从指定歌曲开始；部分浏览器会拦截自动出声，访客点按页面后就会播放。</p></div></div>
-          <UploadBox reload={reload} accept="audio/mpeg,audio/mp4,audio/x-m4a,audio/ogg" />
+          <UploadBox reload={reload} accept="audio/mpeg,audio/mp4,audio/x-m4a,audio/ogg,audio/flac,audio/x-flac,.flac" />
           <label className="check-field full-field"><input type="checkbox" checked={Boolean(form.musicAutoplay)} onChange={(event) => update("musicAutoplay", event.target.checked ? 1 : 0)} /><span>进入主页时自动播放</span></label>
           <label className="field full-field"><span>进入主页播放的歌曲</span><select value={enabledTracks.some((item) => item.id === form.musicMediaId) ? String(form.musicMediaId) : (enabledTracks[0] ? String(enabledTracks[0].id) : "")} onChange={(event) => update("musicMediaId", event.target.value ? Number(event.target.value) : null)} disabled={!enabledTracks.length}>{enabledTracks.length ? enabledTracks.map((item) => <option value={item.id} key={item.id}>{item.title}{item.artist ? ` · ${item.artist}` : ""}</option>) : <option value="">请先勾选至少一首主页播放歌曲</option>}</select></label>
           <label className="field full-field"><span>默认播放模式</span><select value={form.musicMode} onChange={(event) => update("musicMode", event.target.value as PlaybackMode)}><option value="sequence">顺序播放</option><option value="repeat-one">单曲循环</option><option value="shuffle">随机播放</option></select></label>

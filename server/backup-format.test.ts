@@ -209,6 +209,17 @@ test("a complete version 1 backup remains accepted", () => {
   assert.equal(parsed.summary.mediaBytes, 0);
 });
 
+test("backup manifest accepts flac audio mime types", () => {
+  for (const mime of ["audio/flac", "audio/x-flac"]) {
+    const tables = validTables();
+    tables.media[1].mime_type = mime;
+    tables.media[1].original_name = "song.flac";
+    tables.media[1].file_path = "song.flac";
+    const parsed = parseBackupManifest(validManifest(tables));
+    assert.equal(parsed.tables.media[1].mime_type, mime);
+  }
+});
+
 test("backup manifest defaults missing music_autoplay for older files", () => {
   const tables = validTables();
   delete tables.settings[0].music_autoplay;
